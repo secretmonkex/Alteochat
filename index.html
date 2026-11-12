@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,36 +5,64 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ALTEO CHAT</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!--
+=== RUN ONCE in Supabase SQL editor (adjust if your tables already exist) ===
+create table if not exists profiles(id uuid primary key references auth.users on delete cascade, username text, avatar_url text, created_at timestamptz default now());
+create table if not exists servers(id uuid primary key default gen_random_uuid(), name text not null, owner_id uuid references auth.users, invite_code text unique, created_at timestamptz default now());
+create table if not exists server_members(server_id uuid references servers on delete cascade, user_id uuid references auth.users on delete cascade, primary key(server_id,user_id));
+create table if not exists channels(id uuid primary key default gen_random_uuid(), server_id uuid references servers on delete cascade, name text not null);
+create table if not exists messages(id bigint generated always as identity primary key, channel_id uuid references channels on delete cascade, user_id uuid references auth.users, content text not null, created_at timestamptz default now());
+create table if not exists direct_messages(id bigint generated always as identity primary key, sender_id uuid references auth.users, receiver_id uuid references auth.users, content text not null, created_at timestamptz default now());
+do $$ declare t text; begin foreach t in array array['profiles','servers','server_members','channels','messages','direct_messages'] loop
+ execute format('alter table %I enable row level security',t);
+ execute format('create policy "auth all" on %I for all to authenticated using (true) with check (true)',t);
+end loop; end $$;
+alter publication supabase_realtime add table messages, direct_messages;
+(These policies are permissive prototype policies - tighten them before real production use.)
+-->
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#111218;color:#f5f5f7;font-family:Arial,sans-serif}
 button,input{font:inherit}
-button{background:#7657e8;color:white;border:0;padding:12px;border-radius:8px;cursor:pointer}
-input{width:100%;padding:13px;background:#22232c;border:1px solid #383946;border-radius:8px;color:white;margin:6px 0}
+button{background:#7657e8;color:#fff;border:0;padding:10px 12px;border-radius:8px;cursor:pointer}
+button:hover{filter:brightness(1.12)}
+button.ghost{background:#252630}
+button.danger{background:#c0392b}
+button.on{background:#7657e8}
+input{width:100%;padding:12px;background:#22232c;border:1px solid #383946;border-radius:8px;color:#fff;margin:6px 0}
 .hidden{display:none!important}
 #auth{max-width:420px;margin:8vh auto;padding:25px;background:#191a22;border-radius:15px}
 #auth h1{letter-spacing:3px}
 #auth button{width:100%;margin-top:8px}
 #app{display:flex;height:100dvh}
-#side{width:260px;background:#191a22;padding:15px;display:flex;flex-direction:column;gap:10px;overflow:auto}
-#servers button,#channels button{width:100%;text-align:left;margin:3px 0;background:#252630}
+#side{width:250px;background:#191a22;padding:14px;display:flex;flex-direction:column;gap:6px;overflow:auto;flex-shrink:0}
+#side button{width:100%;text-align:left;margin:2px 0;background:#252630}
+#side button.on{background:#7657e8}
 #main{flex:1;min-width:0;display:flex;flex-direction:column}
-#top{padding:16px;border-bottom:1px solid #33343d}
+#top{padding:16px;border-bottom:1px solid #33343d;display:flex;justify-content:space-between;align-items:center;gap:8px}
+#top button{padding:6px 10px}
+#body{flex:1;min-height:0;display:flex;flex-direction:column}
 #messages{flex:1;overflow:auto;padding:18px}
-.msg{padding:12px 0;border-bottom:1px solid #292a33}
+.msg{padding:10px 0;border-bottom:1px solid #292a33;word-wrap:break-word;white-space:pre-wrap}
 .name{color:#b8a4ff;font-weight:bold}
 .time{color:#888;font-size:11px;margin-left:8px}
 #sendbar{display:flex;gap:8px;padding:12px}
 #sendbar input{margin:0}
-#sendbar button{min-width:65px}
 .small{font-size:12px;color:#999}
-.error{color:#ff7777}
-#account{margin-top:auto;border-top:1px solid #333;padding-top:12px}
-@media(max-width:650px){
-#side{width:115px;padding:8px}
-#side button{font-size:11px;padding:9px 4px}
-#side h2{font-size:15px}
-}
+.sec{padding:18px;overflow:auto}
+.cards{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 22px}
+.card{background:#191a22;border:1px solid #2c2d38;border-radius:10px;padding:12px 16px;cursor:pointer}
+.card:hover{border-color:#7657e8}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#3ba55d;margin-right:6px}
+#account{margin-top:auto;border-top:1px solid #333;padding-top:10px}
+#modal{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:10;padding:12px}
+#modal>div{background:#191a22;border-radius:14px;padding:22px;width:100%;max-width:440px;max-height:90dvh;overflow:auto}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;margin:6px 0}
+.row input{margin:0}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#2b7a4b;padding:10px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:.2s;z-index:20}
+#toast.show{opacity:1}
+#toast.err{background:#b03a3a}
+@media(max-width:650px){#side{width:120px;padding:8px}#side button{font-size:11px;padding:9px 4px}}
 </style>
 </head>
 <body>
@@ -43,424 +70,343 @@ input{width:100%;padding:13px;background:#22232c;border:1px solid #383946;border
 <section id="auth">
 <h1>ALTEO CHAT</h1>
 <p>Connect with your community.</p>
-
 <div id="loginPanel">
 <h3>Log in</h3>
 <input id="loginEmail" type="email" placeholder="Email address">
-<input id="loginPassword" type="password" placeholder="Password">
+<input id="loginPassword" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')login()">
 <button onclick="login()">Log in</button>
-<button onclick="showPanel('registerPanel')">Create account</button>
-<button onclick="showPanel('resetPanel')">Forgot password?</button>
+<button class="ghost" onclick="showPanel('registerPanel')">Create account</button>
+<button class="ghost" onclick="showPanel('resetPanel')">Forgot password?</button>
 </div>
-
 <div id="registerPanel" class="hidden">
 <h3>Create your account</h3>
 <input id="regName" placeholder="Username">
 <input id="regEmail" type="email" placeholder="Email">
-<input id="regPassword" type="password" placeholder="Password">
+<input id="regPassword" type="password" placeholder="Password (min 6 characters)">
 <button onclick="register()">Create account</button>
-<button onclick="showPanel('loginPanel')">Back to login</button>
+<button class="ghost" onclick="showPanel('loginPanel')">Back to login</button>
 </div>
-
 <div id="resetPanel" class="hidden">
 <h3>Reset password</h3>
 <input id="resetEmail" type="email" placeholder="Your account email">
 <button onclick="sendReset()">Send reset email</button>
-<button onclick="showPanel('loginPanel')">Back to login</button>
+<button class="ghost" onclick="showPanel('loginPanel')">Back to login</button>
 </div>
-
 <div id="newPasswordPanel" class="hidden">
 <h3>Choose a new password</h3>
 <input id="newPassword" type="password" placeholder="New password">
 <button onclick="saveNewPassword()">Save password</button>
 </div>
-
 <p id="authMessage" class="small"></p>
 </section>
 
 <section id="app" class="hidden">
-<aside id="side">
-<h2>ALTEO</h2>
-<p class="small">SERVERS</p>
-<div id="servers"></div>
-<button onclick="createServer()">+ Server</button>
-<button onclick="joinServer()">Join server</button>
-<hr>
-<p class="small">CHANNELS</p>
-<div id="channels"></div>
-<button onclick="createChannel()">+ Channel</button>
-<div id="account">
-<b id="myName">User</b>
-<p class="small" id="myEmail"></p>
-</div>
-</aside>
-
+<aside id="side"></aside>
 <main id="main">
-<header id="top">Select a server and channel</header>
-<div id="messages"></div>
-<div id="sendbar">
-<input id="messageInput" placeholder="Write a message..."
-onkeydown="if(event.key==='Enter')sendMessage()">
-<button onclick="sendMessage()">Send</button>
-</div>
+<header id="top"></header>
+<div id="body"></div>
 </main>
 </section>
 
+<div id="modal" class="hidden" onclick="if(event.target===this)closeModal()"><div id="modalBox"></div></div>
+<div id="toast"></div>
+
 <script>
-const SUPABASE_URL = "https://supabase.com/dashboard/project/xmsqmbgqeqvfakfjrzrn";
+const SUPABASE_URL = "https://xmsqmbgqeqvfakfjrzrn.supabase.co";
 const SUPABASE_KEY = "sb_publishable_Bl5GPm5FoUDryO-rR8usUQ_uJ0EHHlV";
-
-const db = window.supabase.createClient(
-  SUPABASE_URL,
-  SUPABASE_KEY,
-  {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true
-    }
-  }
-);
-
-let user = null;
-let currentServer = null;
-let currentChannel = null;
-let liveMessages = null;
-let starting = false;
-let recoveryMode = false;
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const $ = id => document.getElementById(id);
-
-function message(text, error=false) {
-  $("authMessage").textContent = text;
-  $("authMessage").className = error ? "small error" : "small";
-}
-
-function showPanel(id) {
-  ["loginPanel","registerPanel","resetPanel","newPasswordPanel"]
-    .forEach(x => $(x).classList.add("hidden"));
-  $(id).classList.remove("hidden");
-  message("");
-}
-
-async function register() {
-  const username = $("regName").value.trim();
-  const email = $("regEmail").value.trim();
-  const password = $("regPassword").value;
-
-  if (!username || !email || password.length < 8) {
-    return message("Enter a username, valid email and password with at least 8 characters.",true);
-  }
-
-  const {data,error} = await db.auth.signUp({
-    email,
-    password,
-    options: {
-      data: {username},
-      emailRedirectTo: location.href.split("#")[0]
-    }
-  });
-
-  if(error) return message(error.message,true);
-
-  if(data.session) {
-    await startApp(data.user);
-  } else {
-    message("Account created. Check your email to confirm your address.");
-  }
-}
-
-async function login() {
-  const email = $("loginEmail").value.trim();
-  const password = $("loginPassword").value;
-
-  const {data,error} = await db.auth.signInWithPassword({
-    email,
-    password
-  });
-
-  if(error) return message(error.message,true);
-  await startApp(data.user);
-}
-
-async function sendReset() {
-  const email = $("resetEmail").value.trim();
-
-  if(!email) return message("Enter your email address.",true);
-
-  const {error} = await db.auth.resetPasswordForEmail(email,{
-    redirectTo: location.href.split("#")[0]
-  });
-
-  if(error) return message(error.message,true);
-
-  message("If an account exists for that email, a reset link will be sent.");
-}
-
-async function saveNewPassword() {
-  const password = $("newPassword").value;
-
-  if(password.length < 8) {
-    return message("Use at least 8 characters.",true);
-  }
-
-  const {error} = await db.auth.updateUser({password});
-
-  if(error) return message(error.message,true);
-
-  recoveryMode = false;
-  message("Password updated. Your account is ready.");
-  showPanel("loginPanel");
-}
-
-async function startApp(account) {
-  if(starting) return;
-  starting = true;
-
-  try {
-    user = account;
-
-    $("auth").classList.add("hidden");
-    $("app").classList.remove("hidden");
-    $("myEmail").textContent = account.email || "";
-
-    await loadProfile();
-    await loadServers();
-  } catch(error) {
-    console.error(error);
-    message("Could not load your account data: " + error.message,true);
-  } finally {
-    starting = false;
-  }
-}
-
-async function loadProfile() {
-  const {data,error} = await db
-    .from("profiles")
-    .select("username")
-    .eq("id",user.id)
-    .maybeSingle();
-
-  if(error) throw error;
-
-  $("myName").textContent =
-    data?.username ||
-    user.user_metadata?.username ||
-    "User";
-}
-
-async function loadServers() {
-  const {data,error} = await db
-    .from("server_members")
-    .select("server_id,servers(id,name)")
-    .eq("user_id",user.id);
-
-  if(error) throw error;
-
-  $("servers").replaceChildren();
-
-  for(const item of data || []) {
-    if(!item.servers) continue;
-
-    const btn = document.createElement("button");
-    btn.textContent = item.servers.name;
-    btn.onclick = () => openServer(item.servers);
-    $("servers").appendChild(btn);
-  }
-}
-
-async function openServer(server) {
-  currentServer = server;
-  currentChannel = null;
-
-  $("channels").replaceChildren();
-  $("messages").replaceChildren();
-  $("top").textContent = server.name;
-
-  const {data,error} = await db
-    .from("channels")
-    .select("id,name")
-    .eq("server_id",server.id)
-    .order("created_at");
-
-  if(error) return alert(error.message);
-
-  for(const channel of data || []) {
-    const btn = document.createElement("button");
-    btn.textContent = "# " + channel.name;
-    btn.onclick = () => openChannel(channel);
-    $("channels").appendChild(btn);
-  }
-}
-
-async function openChannel(channel) {
-  currentChannel = channel;
-  $("top").textContent = "# " + channel.name;
-
-  if(liveMessages) {
-    await db.removeChannel(liveMessages);
-    liveMessages = null;
-  }
-
-  await loadMessages();
-
-  liveMessages = db
-    .channel("alteo-" + channel.id)
-    .on("postgres_changes",{
-      event:"INSERT",
-      schema:"public",
-      table:"messages",
-      filter:"channel_id=eq." + channel.id
-    }, async payload => {
-      const {data} = await db
-        .from("profiles")
-        .select("username")
-        .eq("id",payload.new.user_id)
-        .maybeSingle();
-
-      addMessage(payload.new,data?.username || "User");
-    })
-    .subscribe();
-}
-
-async function loadMessages() {
-  $("messages").replaceChildren();
-
-  const {data,error} = await db
-    .from("messages")
-    .select("*")
-    .eq("channel_id",currentChannel.id)
-    .order("created_at",{ascending:true});
-
-  if(error) return alert(error.message);
-
-  const ids = [...new Set((data || []).map(x => x.user_id))];
-  const names = {};
-
-  if(ids.length) {
-    const result = await db
-      .from("profiles")
-      .select("id,username")
-      .in("id",ids);
-
-    for(const p of result.data || []) names[p.id] = p.username;
-  }
-
-  for(const item of data || []) {
-    addMessage(item,names[item.user_id] || "User");
-  }
-}
-
-function addMessage(item,username) {
-  const box = document.createElement("div");
-  box.className = "msg";
-
-  const name = document.createElement("span");
-  name.className = "name";
-  name.textContent = username;
-
-  const time = document.createElement("span");
-  time.className = "time";
-  time.textContent = item.created_at
-    ? new Date(item.created_at).toLocaleString()
-    : "";
-
-  const content = document.createElement("p");
-  content.textContent = item.content || "";
-
-  box.append(name,time,content);
-  $("messages").appendChild(box);
-  $("messages").scrollTop = $("messages").scrollHeight;
-}
-
-async function sendMessage() {
-  if(!currentChannel) return;
-
-  const content = $("messageInput").value.trim();
-  if(!content) return;
-
-  const {error} = await db
-    .from("messages")
-    .insert({
-      channel_id:currentChannel.id,
-      user_id:user.id,
-      content
-    });
-
-  if(error) return alert(error.message);
-
-  $("messageInput").value = "";
-}
-
-async function createServer() {
-  const name = prompt("Server name:");
-  if(!name?.trim()) return;
-
-  const {error} = await db.rpc("create_server",{
-    server_name:name.trim()
-  });
-
-  if(error) return alert(error.message);
-  await loadServers();
-}
-
-async function joinServer() {
-  const code = prompt("Invite code:");
-  if(!code?.trim()) return;
-
-  const {error} = await db.rpc("join_server",{
-    invite_code_input:code.trim()
-  });
-
-  if(error) return alert(error.message);
-  await loadServers();
-}
-
-async function createChannel() {
-  if(!currentServer) return alert("Select a server first.");
-
-  const name = prompt("Channel name:");
-  if(!name?.trim()) return;
-
-  const {error} = await db
-    .from("channels")
-    .insert({
-      server_id:currentServer.id,
-      name:name.trim()
-    });
-
-  if(error) return alert(error.message);
-  await openServer(currentServer);
-}
-
-db.auth.onAuthStateChange((event,session) => {
-  if(event === "PASSWORD_RECOVERY") {
-    recoveryMode = true;
-    $("auth").classList.remove("hidden");
-    $("app").classList.add("hidden");
-    showPanel("newPasswordPanel");
-    return;
-  }
-
-  if(session && !user) {
-    startApp(session.user);
-  }
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const S = {me:null, profile:null, servers:[], server:null, channels:[], view:'home', chat:null, online:{}, cache:{}};
+
+function toast(msg, err){const t=$('toast');t.textContent=msg;t.className='show'+(err?' err':'');clearTimeout(toast.t);toast.t=setTimeout(()=>t.className='',3500)}
+async function run(p){const {data,error}=await p;if(error){toast(error.message,true);throw error}return data}
+const guard = fn => (...a) => Promise.resolve(fn(...a)).catch(e => console.error(e));
+const fmt = d => new Date(d).toLocaleString([], {dateStyle:'short', timeStyle:'short'});
+
+/* ---------- AUTH ---------- */
+function showPanel(id){['loginPanel','registerPanel','resetPanel','newPasswordPanel'].forEach(p=>$(p).classList.toggle('hidden',p!==id));authMsg('')}
+function authMsg(t,err){const m=$('authMessage');m.textContent=t;m.style.color=err?'#ff7777':'#999'}
+async function authCall(p){const {data,error}=await p;if(error){authMsg(error.message,true);throw error}return data}
+const login = guard(async()=>{
+  authMsg('Logging in…');
+  await authCall(sb.auth.signInWithPassword({email:$('loginEmail').value.trim(),password:$('loginPassword').value}));
+});
+const register = guard(async()=>{
+  const username=$('regName').value.trim();
+  if(!username) return authMsg('Please choose a username.',true);
+  const d=await authCall(sb.auth.signUp({email:$('regEmail').value.trim(),password:$('regPassword').value,options:{data:{username}}}));
+  authMsg(d.session?'Account created!':'Account created. Check your email to confirm, then log in.');
+});
+const sendReset = guard(async()=>{
+  await authCall(sb.auth.resetPasswordForEmail($('resetEmail').value.trim(),{redirectTo:location.href.split('#')[0]}));
+  authMsg('Reset email sent. Check your inbox.');
+});
+const saveNewPassword = guard(async()=>{
+  await authCall(sb.auth.updateUser({password:$('newPassword').value}));
+  authMsg('Password updated.'); showPanel('loginPanel');
+  S.recovery=false; if(S.pendingUser) boot(S.pendingUser);
 });
 
-async function boot() {
-  const {data,error} = await db.auth.getSession();
+sb.auth.onAuthStateChange((event, session) => {
+  if(event==='PASSWORD_RECOVERY'){S.recovery=true;showPanel('newPasswordPanel');return}
+  if(session && !S.me){ if(S.recovery){S.pendingUser=session.user;return} setTimeout(()=>boot(session.user),0) }
+  if(!session && S.me) setTimeout(teardown,0);
+});
 
-  if(error) {
-    message(error.message,true);
-    return;
-  }
-
-  if(data.session) {
-    await startApp(data.session.user);
-  }
+async function boot(user){
+  if(S.me) return;
+  S.me=user;
+  try{
+    await sb.from('profiles').upsert({id:user.id,username:user.user_metadata?.username||user.email.split('@')[0]},{onConflict:'id',ignoreDuplicates:true});
+    S.profile=await run(sb.from('profiles').select('*').eq('id',user.id).single());
+    S.cache[user.id]=S.profile;
+    $('auth').classList.add('hidden');$('app').classList.remove('hidden');
+    await loadServers(); startPresence(); goHome();
+  }catch(e){console.error(e);S.me=null}
+}
+async function teardown(){
+  await closeChat();
+  if(S.presence) sb.removeChannel(S.presence);
+  Object.assign(S,{me:null,profile:null,servers:[],server:null,channels:[],online:{},cache:{},presence:null});
+  $('app').classList.add('hidden');$('auth').classList.remove('hidden');showPanel('loginPanel');
 }
 
-boot();
+/* ---------- DATA HELPERS ---------- */
+async function preload(ids){
+  const need=[...new Set(ids)].filter(i=>i&&!S.cache[i]);
+  if(!need.length) return;
+  const rows=await run(sb.from('profiles').select('*').in('id',need));
+  rows.forEach(r=>S.cache[r.id]=r);
+}
+const uname = id => esc(S.cache[id]?.username||'Unknown');
+
+async function loadServers(){
+  const rows=await run(sb.from('server_members').select('servers(*)').eq('user_id',S.me.id));
+  S.servers=rows.map(r=>r.servers).filter(Boolean);
+}
+function startPresence(){
+  const ch=sb.channel('presence:alteo',{config:{presence:{key:S.me.id}}});
+  ch.on('presence',{event:'sync'},()=>{
+    const st=ch.presenceState();S.online={};
+    Object.keys(st).forEach(k=>S.online[k]=st[k][0]?.username||'User');
+    renderOnline();
+  }).subscribe(async s=>{if(s==='SUBSCRIBED')await ch.track({username:S.profile.username})});
+  S.presence=ch;
+}
+
+/* ---------- SIDEBAR / NAV ---------- */
+function renderSide(){
+  const sv=S.servers.map(s=>`<button class="${S.server?.id===s.id&&S.view==='server'?'on':''}" onclick="selectServer('${s.id}')">${esc(s.name)}</button>`).join('');
+  const ch=S.view==='server'&&S.server?S.channels.map(c=>`<button class="${S.chat?.kind==='channel'&&S.chat.id===c.id?'on':''}" onclick="openChannel('${c.id}')"># ${esc(c.name)}</button>`).join('')+`<button class="ghost" onclick="createChannel()">+ Channel</button>`:'';
+  $('side').innerHTML=`<h2>ALTEO</h2>
+  <button class="${S.view==='home'?'on':''}" onclick="goHome()">Home</button>
+  <button class="${S.view==='dms'||S.view==='dm'?'on':''}" onclick="goDMs()">Direct messages</button>
+  <p class="small">SERVERS</p>${sv}
+  <button class="ghost" onclick="createServer()">+ Server</button>
+  <button class="ghost" onclick="joinServer()">Join server</button>
+  ${ch?`<hr style="width:100%;border-color:#333"><p class="small">CHANNELS</p>${ch}`:''}
+  <div id="account"><b>${esc(S.profile.username)}</b><p class="small">${esc(S.me.email)}</p>
+  <button class="ghost" onclick="openSettings()">Settings</button></div>`;
+}
+function setTop(html){$('top').innerHTML=html}
+
+/* ---------- HOME ---------- */
+const goHome = guard(async()=>{
+  await closeChat(); S.view='home'; renderSide(); setTop('<b>Home</b>');
+  $('body').innerHTML=`<div class="sec"><h2>Welcome back, ${esc(S.profile.username)}</h2>
+  <p class="small">YOUR SERVERS</p><div class="cards">${S.servers.map(s=>`<div class="card" onclick="selectServer('${s.id}')">${esc(s.name)}</div>`).join('')||'<span class="small">No servers yet - create or join one from the sidebar.</span>'}</div>
+  <p class="small">ONLINE NOW</p><div class="cards" id="onlineList"></div>
+  <p class="small">RECENT DIRECT MESSAGES</p><div class="cards" id="recentDMs"><span class="small">Loading…</span></div></div>`;
+  renderOnline(); renderRecent('recentDMs');
+});
+function renderOnline(){
+  const el=$('onlineList'); if(!el) return;
+  const ids=Object.keys(S.online).filter(i=>i!==S.me.id);
+  el.innerHTML=ids.map(i=>`<div class="card" onclick="openDM('${i}')"><span class="dot"></span>${esc(S.online[i])}</div>`).join('')||'<span class="small">Nobody else is online right now.</span>';
+}
+async function recentPeers(){
+  const rows=await run(sb.from('direct_messages').select('*').or(`sender_id.eq.${S.me.id},receiver_id.eq.${S.me.id}`).order('created_at',{ascending:false}).limit(60));
+  const peers=[...new Set(rows.map(r=>r.sender_id===S.me.id?r.receiver_id:r.sender_id))].slice(0,12);
+  await preload(peers); return peers;
+}
+async function renderRecent(elId){
+  const peers=await recentPeers(), el=$(elId); if(!el) return;
+  el.innerHTML=peers.map(p=>`<div class="card" onclick="openDM('${p}')">${uname(p)}</div>`).join('')||'<span class="small">No conversations yet.</span>';
+}
+
+/* ---------- DMs ---------- */
+const goDMs = guard(async()=>{
+  await closeChat(); S.view='dms'; renderSide(); setTop('<b>Direct messages</b>');
+  $('body').innerHTML=`<div class="sec"><input id="dmSearch" placeholder="Search users by username…" oninput="searchUsers(this.value)">
+  <div class="cards" id="dmResults"></div><p class="small">CONVERSATIONS</p><div class="cards" id="dmList"><span class="small">Loading…</span></div></div>`;
+  renderRecent('dmList');
+});
+let searchT;
+function searchUsers(q){
+  clearTimeout(searchT);
+  searchT=setTimeout(guard(async()=>{
+    const el=$('dmResults'); if(!el) return;
+    q=q.trim().replace(/[%,()]/g,''); if(!q){el.innerHTML='';return}
+    const rows=await run(sb.from('profiles').select('*').ilike('username',`%${q}%`).neq('id',S.me.id).limit(10));
+    rows.forEach(r=>S.cache[r.id]=r);
+    el.innerHTML=rows.map(r=>`<div class="card" onclick="openDM('${r.id}')">${esc(r.username)}</div>`).join('')||'<span class="small">No users found.</span>';
+  }),250);
+}
+const openDM = guard(async id=>{
+  S.view='dm'; await preload([id]); renderSide();
+  await openChat('dm',id,`<b>@ ${uname(id)}</b><button class="ghost" onclick="goDMs()">Back</button>`);
+});
+
+/* ---------- SERVERS & CHANNELS ---------- */
+const selectServer = guard(async id=>{
+  await closeChat();
+  S.server=S.servers.find(s=>s.id===id); S.view='server';
+  S.channels=await run(sb.from('channels').select('*').eq('server_id',id).order('name'));
+  renderSide();
+  if(S.channels.length) openChannel(S.channels[0].id);
+  else{setTop(srvTop());$('body').innerHTML='<div class="sec small">This server has no channels yet. Create one from the sidebar.</div>'}
+});
+const srvTop = () => `<b>${esc(S.server.name)}</b>${S.server.owner_id===S.me.id?'<button class="ghost" onclick="openServerSettings()">Server settings</button>':''}`;
+const openChannel = guard(async id=>{
+  const c=S.channels.find(x=>x.id===id); if(!c) return;
+  await openChat('channel',id,srvTop().replace('<b>','<b># '+esc(c.name)+' - '));
+});
+const randCode = () => Array.from(crypto.getRandomValues(new Uint8Array(8)),b=>'abcdefghjkmnpqrstuvwxyz23456789'[b%31]).join('');
+const createServer = guard(async()=>{
+  const name=(prompt('Server name')||'').trim(); if(!name) return;
+  const s=await run(sb.from('servers').insert({name,owner_id:S.me.id,invite_code:randCode()}).select().single());
+  await run(sb.from('server_members').insert({server_id:s.id,user_id:S.me.id}));
+  await run(sb.from('channels').insert({server_id:s.id,name:'general'}));
+  await loadServers(); toast('Server created'); selectServer(s.id);
+});
+const joinServer = guard(async()=>{
+  const code=(prompt('Invite code')||'').trim().toLowerCase(); if(!code) return;
+  const s=await run(sb.from('servers').select('*').eq('invite_code',code).maybeSingle());
+  if(!s) return toast('Invalid invite code',true);
+  await run(sb.from('server_members').upsert({server_id:s.id,user_id:S.me.id},{onConflict:'server_id,user_id',ignoreDuplicates:true}));
+  await loadServers(); toast('Joined '+s.name); selectServer(s.id);
+});
+const createChannel = guard(async()=>{
+  if(!S.server) return;
+  const name=(prompt('Channel name')||'').trim().toLowerCase().replace(/\s+/g,'-'); if(!name) return;
+  const c=await run(sb.from('channels').insert({server_id:S.server.id,name}).select().single());
+  S.channels.push(c); renderSide(); openChannel(c.id);
+});
+
+/* ---------- CHAT ENGINE ---------- */
+async function closeChat(){
+  if(S.chat?.sub) await sb.removeChannel(S.chat.sub);
+  S.chat=null;
+}
+async function openChat(kind,id,title){
+  await closeChat();
+  const chat=S.chat={kind,id,seen:new Set(),sub:null};
+  setTop(title); renderSide();
+  $('body').innerHTML=`<div id="messages"><p class="small">Loading…</p></div><div id="sendbar"><input id="messageInput" placeholder="Write a message…" autocomplete="off" onkeydown="if(event.key==='Enter')sendMessage()"><button onclick="sendMessage()">Send</button></div>`;
+  let q=kind==='channel'
+    ? sb.from('messages').select('*').eq('channel_id',id)
+    : sb.from('direct_messages').select('*').or(`and(sender_id.eq.${S.me.id},receiver_id.eq.${id}),and(sender_id.eq.${id},receiver_id.eq.${S.me.id})`);
+  const rows=(await run(q.order('created_at',{ascending:false}).limit(100))).reverse();
+  if(S.chat!==chat) return;
+  await preload(rows.map(r=>r.user_id||r.sender_id));
+  $('messages').innerHTML=rows.length?'':'<p class="small" id="empty">No messages yet. Say hello!</p>';
+  rows.forEach(m=>addMsg(m,true)); scrollDown(true);
+  const cfg=kind==='channel'
+    ? {table:'messages',filter:'channel_id=eq.'+id}
+    : {table:'direct_messages',filter:'receiver_id=eq.'+S.me.id};
+  chat.sub=sb.channel(`chat:${kind}:${id}:${Date.now()}`)
+    .on('postgres_changes',{event:'INSERT',schema:'public',...cfg},async p=>{
+      const m=p.new; if(S.chat!==chat) return;
+      if(kind==='dm'&&m.sender_id!==id) { toast('New message from '+(S.cache[m.sender_id]?.username||'someone')); return }
+      await preload([m.user_id||m.sender_id]); addMsg(m);
+    })
+    .subscribe(st=>{if(st==='CHANNEL_ERROR'||st==='TIMED_OUT')toast('Realtime connection problem - messages may be delayed',true)});
+  $('messageInput').focus();
+}
+function addMsg(m,initial){
+  const chat=S.chat, box=$('messages'); if(!chat||!box||chat.seen.has(m.id)) return;
+  chat.seen.add(m.id); $('empty')?.remove();
+  const uid=m.user_id||m.sender_id;
+  const near=box.scrollHeight-box.scrollTop-box.clientHeight<120;
+  const d=document.createElement('div'); d.className='msg';
+  d.innerHTML=`<span class="name">${uname(uid)}</span><span class="time">${fmt(m.created_at)}</span><div>${esc(m.content)}</div>`;
+  box.appendChild(d);
+  if(!initial&&(near||uid===S.me.id)) scrollDown();
+}
+function scrollDown(){const b=$('messages');if(b)b.scrollTop=b.scrollHeight}
+const sendMessage = guard(async()=>{
+  const inp=$('messageInput'), chat=S.chat; if(!inp||!chat) return;
+  const content=inp.value.trim(); if(!content) return;
+  inp.disabled=true;
+  try{
+    const row=chat.kind==='channel'
+      ? {channel_id:chat.id,user_id:S.me.id,content}
+      : {sender_id:S.me.id,receiver_id:chat.id,content};
+    const m=await run(sb.from(chat.kind==='channel'?'messages':'direct_messages').insert(row).select().single());
+    inp.value=''; addMsg(m);
+  } finally { inp.disabled=false; inp.focus() }
+});
+
+/* ---------- MODALS ---------- */
+function openModal(html){$('modalBox').innerHTML=html;$('modal').classList.remove('hidden')}
+function closeModal(){$('modal').classList.add('hidden')}
+
+function openSettings(){
+  openModal(`<h3>User settings</h3>
+  <label class="small">Display name</label><input id="setName" value="${esc(S.profile.username)}">
+  <label class="small">Avatar URL</label><input id="setAvatar" value="${esc(S.profile.avatar_url||'')}">
+  <button onclick="saveProfile()">Save profile</button><hr style="border-color:#333">
+  <label class="small">Email</label><input id="setEmail" type="email" value="${esc(S.me.email)}">
+  <button onclick="saveEmail()">Update email</button>
+  <label class="small">New password</label><input id="setPass" type="password" placeholder="At least 6 characters">
+  <button onclick="savePass()">Update password</button><hr style="border-color:#333">
+  <div class="row"><button class="danger" onclick="logout()">Log out</button><button class="ghost" onclick="closeModal()">Close</button></div>`);
+}
+const saveProfile = guard(async()=>{
+  const username=$('setName').value.trim(); if(!username) return toast('Name cannot be empty',true);
+  const avatar_url=$('setAvatar').value.trim()||null;
+  S.profile=await run(sb.from('profiles').update({username,avatar_url}).eq('id',S.me.id).select().single());
+  S.cache[S.me.id]=S.profile; renderSide(); toast('Profile saved');
+});
+const saveEmail = guard(async()=>{
+  await run(sb.auth.updateUser({email:$('setEmail').value.trim()}));
+  toast('Check your inbox to confirm the new email');
+});
+const savePass = guard(async()=>{
+  const p=$('setPass').value; if(p.length<6) return toast('Password is too short',true);
+  await run(sb.auth.updateUser({password:p})); $('setPass').value=''; toast('Password updated');
+});
+const logout = guard(async()=>{closeModal();await sb.auth.signOut()});
+
+function openServerSettings(){
+  const s=S.server; if(!s||s.owner_id!==S.me.id) return;
+  openModal(`<h3>${esc(s.name)} - settings</h3>
+  <p class="small">INVITE CODE</p>
+  <div class="row"><input id="invCode" readonly value="${esc(s.invite_code||'')}"><button onclick="copyInvite()">Copy</button></div>
+  <button class="ghost" onclick="regenInvite()">Generate new code</button>
+  <p class="small">CHANNELS</p>
+  ${S.channels.map(c=>`<div class="row"><span># ${esc(c.name)}</span><button class="danger" onclick="deleteChannel('${c.id}')">Delete</button></div>`).join('')||'<span class="small">None</span>'}
+  <hr style="border-color:#333"><div class="row"><button class="danger" onclick="deleteServer()">Delete server</button><button class="ghost" onclick="closeModal()">Close</button></div>`);
+}
+const copyInvite = guard(async()=>{await navigator.clipboard.writeText($('invCode').value);toast('Copied')});
+const regenInvite = guard(async()=>{
+  const code=randCode();
+  await run(sb.from('servers').update({invite_code:code}).eq('id',S.server.id));
+  S.server.invite_code=code; openServerSettings(); toast('New invite code generated');
+});
+const deleteChannel = guard(async id=>{
+  if(!confirm('Delete this channel and its messages?')) return;
+  await run(sb.from('channels').delete().eq('id',id));
+  S.channels=S.channels.filter(c=>c.id!==id); closeModal();
+  if(S.chat?.id===id){await closeChat();S.channels.length?openChannel(S.channels[0].id):selectServer(S.server.id)} else renderSide();
+});
+const deleteServer = guard(async()=>{
+  if(!confirm('Delete this whole server? This cannot be undone.')) return;
+  await run(sb.from('servers').delete().eq('id',S.server.id));
+  S.server=null; closeModal(); await loadServers(); goHome();
+});
 </script>
 </body>
 </html>
