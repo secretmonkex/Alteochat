@@ -1,0 +1,466 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ALTEO CHAT</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#111218;color:#f5f5f7;font-family:Arial,sans-serif}
+button,input{font:inherit}
+button{background:#7657e8;color:white;border:0;padding:12px;border-radius:8px;cursor:pointer}
+input{width:100%;padding:13px;background:#22232c;border:1px solid #383946;border-radius:8px;color:white;margin:6px 0}
+.hidden{display:none!important}
+#auth{max-width:420px;margin:8vh auto;padding:25px;background:#191a22;border-radius:15px}
+#auth h1{letter-spacing:3px}
+#auth button{width:100%;margin-top:8px}
+#app{display:flex;height:100dvh}
+#side{width:260px;background:#191a22;padding:15px;display:flex;flex-direction:column;gap:10px;overflow:auto}
+#servers button,#channels button{width:100%;text-align:left;margin:3px 0;background:#252630}
+#main{flex:1;min-width:0;display:flex;flex-direction:column}
+#top{padding:16px;border-bottom:1px solid #33343d}
+#messages{flex:1;overflow:auto;padding:18px}
+.msg{padding:12px 0;border-bottom:1px solid #292a33}
+.name{color:#b8a4ff;font-weight:bold}
+.time{color:#888;font-size:11px;margin-left:8px}
+#sendbar{display:flex;gap:8px;padding:12px}
+#sendbar input{margin:0}
+#sendbar button{min-width:65px}
+.small{font-size:12px;color:#999}
+.error{color:#ff7777}
+#account{margin-top:auto;border-top:1px solid #333;padding-top:12px}
+@media(max-width:650px){
+#side{width:115px;padding:8px}
+#side button{font-size:11px;padding:9px 4px}
+#side h2{font-size:15px}
+}
+</style>
+</head>
+<body>
+
+<section id="auth">
+<h1>ALTEO CHAT</h1>
+<p>Connect with your community.</p>
+
+<div id="loginPanel">
+<h3>Log in</h3>
+<input id="loginEmail" type="email" placeholder="Email address">
+<input id="loginPassword" type="password" placeholder="Password">
+<button onclick="login()">Log in</button>
+<button onclick="showPanel('registerPanel')">Create account</button>
+<button onclick="showPanel('resetPanel')">Forgot password?</button>
+</div>
+
+<div id="registerPanel" class="hidden">
+<h3>Create your account</h3>
+<input id="regName" placeholder="Username">
+<input id="regEmail" type="email" placeholder="Email">
+<input id="regPassword" type="password" placeholder="Password">
+<button onclick="register()">Create account</button>
+<button onclick="showPanel('loginPanel')">Back to login</button>
+</div>
+
+<div id="resetPanel" class="hidden">
+<h3>Reset password</h3>
+<input id="resetEmail" type="email" placeholder="Your account email">
+<button onclick="sendReset()">Send reset email</button>
+<button onclick="showPanel('loginPanel')">Back to login</button>
+</div>
+
+<div id="newPasswordPanel" class="hidden">
+<h3>Choose a new password</h3>
+<input id="newPassword" type="password" placeholder="New password">
+<button onclick="saveNewPassword()">Save password</button>
+</div>
+
+<p id="authMessage" class="small"></p>
+</section>
+
+<section id="app" class="hidden">
+<aside id="side">
+<h2>ALTEO</h2>
+<p class="small">SERVERS</p>
+<div id="servers"></div>
+<button onclick="createServer()">+ Server</button>
+<button onclick="joinServer()">Join server</button>
+<hr>
+<p class="small">CHANNELS</p>
+<div id="channels"></div>
+<button onclick="createChannel()">+ Channel</button>
+<div id="account">
+<b id="myName">User</b>
+<p class="small" id="myEmail"></p>
+</div>
+</aside>
+
+<main id="main">
+<header id="top">Select a server and channel</header>
+<div id="messages"></div>
+<div id="sendbar">
+<input id="messageInput" placeholder="Write a message..."
+onkeydown="if(event.key==='Enter')sendMessage()">
+<button onclick="sendMessage()">Send</button>
+</div>
+</main>
+</section>
+
+<script>
+const SUPABASE_URL = "https://supabase.com/dashboard/project/xmsqmbgqeqvfakfjrzrn";
+const SUPABASE_KEY = "sb_publishable_Bl5GPm5FoUDryO-rR8usUQ_uJ0EHHlV";
+
+const db = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY,
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true
+    }
+  }
+);
+
+let user = null;
+let currentServer = null;
+let currentChannel = null;
+let liveMessages = null;
+let starting = false;
+let recoveryMode = false;
+
+const $ = id => document.getElementById(id);
+
+function message(text, error=false) {
+  $("authMessage").textContent = text;
+  $("authMessage").className = error ? "small error" : "small";
+}
+
+function showPanel(id) {
+  ["loginPanel","registerPanel","resetPanel","newPasswordPanel"]
+    .forEach(x => $(x).classList.add("hidden"));
+  $(id).classList.remove("hidden");
+  message("");
+}
+
+async function register() {
+  const username = $("regName").value.trim();
+  const email = $("regEmail").value.trim();
+  const password = $("regPassword").value;
+
+  if (!username || !email || password.length < 8) {
+    return message("Enter a username, valid email and password with at least 8 characters.",true);
+  }
+
+  const {data,error} = await db.auth.signUp({
+    email,
+    password,
+    options: {
+      data: {username},
+      emailRedirectTo: location.href.split("#")[0]
+    }
+  });
+
+  if(error) return message(error.message,true);
+
+  if(data.session) {
+    await startApp(data.user);
+  } else {
+    message("Account created. Check your email to confirm your address.");
+  }
+}
+
+async function login() {
+  const email = $("loginEmail").value.trim();
+  const password = $("loginPassword").value;
+
+  const {data,error} = await db.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  if(error) return message(error.message,true);
+  await startApp(data.user);
+}
+
+async function sendReset() {
+  const email = $("resetEmail").value.trim();
+
+  if(!email) return message("Enter your email address.",true);
+
+  const {error} = await db.auth.resetPasswordForEmail(email,{
+    redirectTo: location.href.split("#")[0]
+  });
+
+  if(error) return message(error.message,true);
+
+  message("If an account exists for that email, a reset link will be sent.");
+}
+
+async function saveNewPassword() {
+  const password = $("newPassword").value;
+
+  if(password.length < 8) {
+    return message("Use at least 8 characters.",true);
+  }
+
+  const {error} = await db.auth.updateUser({password});
+
+  if(error) return message(error.message,true);
+
+  recoveryMode = false;
+  message("Password updated. Your account is ready.");
+  showPanel("loginPanel");
+}
+
+async function startApp(account) {
+  if(starting) return;
+  starting = true;
+
+  try {
+    user = account;
+
+    $("auth").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    $("myEmail").textContent = account.email || "";
+
+    await loadProfile();
+    await loadServers();
+  } catch(error) {
+    console.error(error);
+    message("Could not load your account data: " + error.message,true);
+  } finally {
+    starting = false;
+  }
+}
+
+async function loadProfile() {
+  const {data,error} = await db
+    .from("profiles")
+    .select("username")
+    .eq("id",user.id)
+    .maybeSingle();
+
+  if(error) throw error;
+
+  $("myName").textContent =
+    data?.username ||
+    user.user_metadata?.username ||
+    "User";
+}
+
+async function loadServers() {
+  const {data,error} = await db
+    .from("server_members")
+    .select("server_id,servers(id,name)")
+    .eq("user_id",user.id);
+
+  if(error) throw error;
+
+  $("servers").replaceChildren();
+
+  for(const item of data || []) {
+    if(!item.servers) continue;
+
+    const btn = document.createElement("button");
+    btn.textContent = item.servers.name;
+    btn.onclick = () => openServer(item.servers);
+    $("servers").appendChild(btn);
+  }
+}
+
+async function openServer(server) {
+  currentServer = server;
+  currentChannel = null;
+
+  $("channels").replaceChildren();
+  $("messages").replaceChildren();
+  $("top").textContent = server.name;
+
+  const {data,error} = await db
+    .from("channels")
+    .select("id,name")
+    .eq("server_id",server.id)
+    .order("created_at");
+
+  if(error) return alert(error.message);
+
+  for(const channel of data || []) {
+    const btn = document.createElement("button");
+    btn.textContent = "# " + channel.name;
+    btn.onclick = () => openChannel(channel);
+    $("channels").appendChild(btn);
+  }
+}
+
+async function openChannel(channel) {
+  currentChannel = channel;
+  $("top").textContent = "# " + channel.name;
+
+  if(liveMessages) {
+    await db.removeChannel(liveMessages);
+    liveMessages = null;
+  }
+
+  await loadMessages();
+
+  liveMessages = db
+    .channel("alteo-" + channel.id)
+    .on("postgres_changes",{
+      event:"INSERT",
+      schema:"public",
+      table:"messages",
+      filter:"channel_id=eq." + channel.id
+    }, async payload => {
+      const {data} = await db
+        .from("profiles")
+        .select("username")
+        .eq("id",payload.new.user_id)
+        .maybeSingle();
+
+      addMessage(payload.new,data?.username || "User");
+    })
+    .subscribe();
+}
+
+async function loadMessages() {
+  $("messages").replaceChildren();
+
+  const {data,error} = await db
+    .from("messages")
+    .select("*")
+    .eq("channel_id",currentChannel.id)
+    .order("created_at",{ascending:true});
+
+  if(error) return alert(error.message);
+
+  const ids = [...new Set((data || []).map(x => x.user_id))];
+  const names = {};
+
+  if(ids.length) {
+    const result = await db
+      .from("profiles")
+      .select("id,username")
+      .in("id",ids);
+
+    for(const p of result.data || []) names[p.id] = p.username;
+  }
+
+  for(const item of data || []) {
+    addMessage(item,names[item.user_id] || "User");
+  }
+}
+
+function addMessage(item,username) {
+  const box = document.createElement("div");
+  box.className = "msg";
+
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = username;
+
+  const time = document.createElement("span");
+  time.className = "time";
+  time.textContent = item.created_at
+    ? new Date(item.created_at).toLocaleString()
+    : "";
+
+  const content = document.createElement("p");
+  content.textContent = item.content || "";
+
+  box.append(name,time,content);
+  $("messages").appendChild(box);
+  $("messages").scrollTop = $("messages").scrollHeight;
+}
+
+async function sendMessage() {
+  if(!currentChannel) return;
+
+  const content = $("messageInput").value.trim();
+  if(!content) return;
+
+  const {error} = await db
+    .from("messages")
+    .insert({
+      channel_id:currentChannel.id,
+      user_id:user.id,
+      content
+    });
+
+  if(error) return alert(error.message);
+
+  $("messageInput").value = "";
+}
+
+async function createServer() {
+  const name = prompt("Server name:");
+  if(!name?.trim()) return;
+
+  const {error} = await db.rpc("create_server",{
+    server_name:name.trim()
+  });
+
+  if(error) return alert(error.message);
+  await loadServers();
+}
+
+async function joinServer() {
+  const code = prompt("Invite code:");
+  if(!code?.trim()) return;
+
+  const {error} = await db.rpc("join_server",{
+    invite_code_input:code.trim()
+  });
+
+  if(error) return alert(error.message);
+  await loadServers();
+}
+
+async function createChannel() {
+  if(!currentServer) return alert("Select a server first.");
+
+  const name = prompt("Channel name:");
+  if(!name?.trim()) return;
+
+  const {error} = await db
+    .from("channels")
+    .insert({
+      server_id:currentServer.id,
+      name:name.trim()
+    });
+
+  if(error) return alert(error.message);
+  await openServer(currentServer);
+}
+
+db.auth.onAuthStateChange((event,session) => {
+  if(event === "PASSWORD_RECOVERY") {
+    recoveryMode = true;
+    $("auth").classList.remove("hidden");
+    $("app").classList.add("hidden");
+    showPanel("newPasswordPanel");
+    return;
+  }
+
+  if(session && !user) {
+    startApp(session.user);
+  }
+});
+
+async function boot() {
+  const {data,error} = await db.auth.getSession();
+
+  if(error) {
+    message(error.message,true);
+    return;
+  }
+
+  if(data.session) {
+    await startApp(data.session.user);
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
