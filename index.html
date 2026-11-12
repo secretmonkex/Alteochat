@@ -5,407 +5,370 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ALTEO CHAT</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<!--
-=== RUN ONCE in Supabase SQL editor (adjust if your tables already exist) ===
-create table if not exists profiles(id uuid primary key references auth.users on delete cascade, username text, avatar_url text, created_at timestamptz default now());
-create table if not exists servers(id uuid primary key default gen_random_uuid(), name text not null, owner_id uuid references auth.users, invite_code text unique, created_at timestamptz default now());
-create table if not exists server_members(server_id uuid references servers on delete cascade, user_id uuid references auth.users on delete cascade, primary key(server_id,user_id));
-create table if not exists channels(id uuid primary key default gen_random_uuid(), server_id uuid references servers on delete cascade, name text not null);
-create table if not exists messages(id bigint generated always as identity primary key, channel_id uuid references channels on delete cascade, user_id uuid references auth.users, content text not null, created_at timestamptz default now());
-create table if not exists direct_messages(id bigint generated always as identity primary key, sender_id uuid references auth.users, receiver_id uuid references auth.users, content text not null, created_at timestamptz default now());
-do $$ declare t text; begin foreach t in array array['profiles','servers','server_members','channels','messages','direct_messages'] loop
- execute format('alter table %I enable row level security',t);
- execute format('create policy "auth all" on %I for all to authenticated using (true) with check (true)',t);
-end loop; end $$;
-alter publication supabase_realtime add table messages, direct_messages;
-(These policies are permissive prototype policies - tighten them before real production use.)
--->
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#111218;color:#f5f5f7;font-family:Arial,sans-serif}
-button,input{font:inherit}
+button,input,select{font:inherit}
 button{background:#7657e8;color:#fff;border:0;padding:10px 12px;border-radius:8px;cursor:pointer}
 button:hover{filter:brightness(1.12)}
-button.ghost{background:#252630}
-button.danger{background:#c0392b}
-button.on{background:#7657e8}
-input{width:100%;padding:12px;background:#22232c;border:1px solid #383946;border-radius:8px;color:#fff;margin:6px 0}
+button.ghost{background:#252630}button.danger{background:#c0392b}
+input,select{width:100%;padding:12px;background:#22232c;border:1px solid #383946;border-radius:8px;color:#fff;margin:6px 0}
+input[type=checkbox]{width:auto;margin:0}input[type=color]{width:46px;padding:2px;height:36px}
 .hidden{display:none!important}
 #auth{max-width:420px;margin:8vh auto;padding:25px;background:#191a22;border-radius:15px}
-#auth h1{letter-spacing:3px}
-#auth button{width:100%;margin-top:8px}
+#auth h1{letter-spacing:3px}#auth button{width:100%;margin-top:8px}
 #app{display:flex;height:100dvh}
-#side{width:250px;background:#191a22;padding:14px;display:flex;flex-direction:column;gap:6px;overflow:auto;flex-shrink:0}
-#side button{width:100%;text-align:left;margin:2px 0;background:#252630}
-#side button.on{background:#7657e8}
+#rail{width:72px;background:#0d0e13;padding:10px 0;display:flex;flex-direction:column;align-items:center;gap:8px;overflow:auto;flex-shrink:0}
+#app.chat #rail{display:none}
+#app.srv .x{display:none!important}
+.rb{width:48px;height:48px;padding:0;border-radius:50%;background:#252630;font-size:20px;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:.15s}
+.rb:hover,.rb.on{border-radius:16px;background:#7657e8}
+.rb img{width:100%;height:100%;object-fit:cover}
 #main{flex:1;min-width:0;display:flex;flex-direction:column}
-#top{padding:16px;border-bottom:1px solid #33343d;display:flex;justify-content:space-between;align-items:center;gap:8px}
-#top button{padding:6px 10px}
-#body{flex:1;min-height:0;display:flex;flex-direction:column}
-#messages{flex:1;overflow:auto;padding:18px}
-.msg{padding:10px 0;border-bottom:1px solid #292a33;word-wrap:break-word;white-space:pre-wrap}
-.name{color:#b8a4ff;font-weight:bold}
-.time{color:#888;font-size:11px;margin-left:8px}
-#sendbar{display:flex;gap:8px;padding:12px}
-#sendbar input{margin:0}
+#top{padding:14px 16px;border-bottom:1px solid #33343d;display:flex;align-items:center;gap:10px}
+#top b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#top button{padding:7px 12px}
+#messages{flex:1;overflow:auto;padding:16px}
+.msg{display:flex;gap:10px;padding:8px 0}
+.msg>div{min-width:0;white-space:pre-wrap;word-wrap:break-word}
+.av{width:38px;height:38px;border-radius:50%;background:#7657e8;display:inline-flex;align-items:center;justify-content:center;font-weight:bold;object-fit:cover;flex-shrink:0}
+.av.big{width:84px;height:84px;font-size:30px;border-radius:20px}
+.name{font-weight:bold}.time{color:#888;font-size:11px;margin-left:8px}
+.att{max-width:min(340px,100%);max-height:300px;border-radius:10px;margin-top:6px;display:block;cursor:zoom-in}
+.file{display:inline-block;margin-top:6px;padding:8px 12px;background:#252630;border-radius:8px;color:#b8a4ff;text-decoration:none}
+#sendbar{display:flex;gap:8px;padding:12px;align-items:center}
+#sendbar input{margin:0}#sendbar button{flex-shrink:0}
 .small{font-size:12px;color:#999}
-.sec{padding:18px;overflow:auto}
+.sec{padding:18px;overflow:auto;flex:1}
 .cards{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 22px}
-.card{background:#191a22;border:1px solid #2c2d38;border-radius:10px;padding:12px 16px;cursor:pointer}
+.card{background:#191a22;border:1px solid #2c2d38;border-radius:10px;padding:12px 16px;cursor:pointer;display:flex;align-items:center;gap:10px}
 .card:hover{border-color:#7657e8}
-.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#3ba55d;margin-right:6px}
-#account{margin-top:auto;border-top:1px solid #333;padding-top:10px}
+.list>.card{width:100%}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#3ba55d}
+.badge{font-size:11px;padding:2px 8px;border-radius:10px;background:#333;margin-left:6px}
 #modal{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:10;padding:12px}
-#modal>div{background:#191a22;border-radius:14px;padding:22px;width:100%;max-width:440px;max-height:90dvh;overflow:auto}
-.row{display:flex;gap:8px;align-items:center;justify-content:space-between;margin:6px 0}
-.row input{margin:0}
+#modal>div{background:#191a22;border-radius:14px;padding:22px;width:100%;max-width:480px;max-height:90dvh;overflow:auto}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;margin:6px 0;flex-wrap:wrap}
+.perms{display:flex;flex-wrap:wrap;gap:10px;font-size:13px}
+.perms label{display:flex;gap:5px;align-items:center}
+.role{background:#22232c;border-radius:10px;padding:10px;margin:8px 0}
+hr{border:0;border-top:1px solid #333;margin:14px 0}
 #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#2b7a4b;padding:10px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:.2s;z-index:20}
-#toast.show{opacity:1}
-#toast.err{background:#b03a3a}
-@media(max-width:650px){#side{width:120px;padding:8px}#side button{font-size:11px;padding:9px 4px}}
+#toast.show{opacity:1}#toast.err{background:#b03a3a}
 </style>
 </head>
 <body>
-
+<!-- Run alteo-v2-setup.sql (from the chat reply) in the Supabase SQL editor before using this file. -->
 <section id="auth">
-<h1>ALTEO CHAT</h1>
-<p>Connect with your community.</p>
-<div id="loginPanel">
-<h3>Log in</h3>
+<h1>ALTEO CHAT</h1><p>Connect with your community.</p>
+<div id="loginPanel"><h3>Log in</h3>
 <input id="loginEmail" type="email" placeholder="Email address">
 <input id="loginPassword" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')login()">
 <button onclick="login()">Log in</button>
 <button class="ghost" onclick="showPanel('registerPanel')">Create account</button>
-<button class="ghost" onclick="showPanel('resetPanel')">Forgot password?</button>
-</div>
-<div id="registerPanel" class="hidden">
-<h3>Create your account</h3>
-<input id="regName" placeholder="Username">
-<input id="regEmail" type="email" placeholder="Email">
+<button class="ghost" onclick="showPanel('resetPanel')">Forgot password?</button></div>
+<div id="registerPanel" class="hidden"><h3>Create your account</h3>
+<input id="regName" placeholder="Username"><input id="regEmail" type="email" placeholder="Email">
 <input id="regPassword" type="password" placeholder="Password (min 6 characters)">
-<button onclick="register()">Create account</button>
-<button class="ghost" onclick="showPanel('loginPanel')">Back to login</button>
-</div>
-<div id="resetPanel" class="hidden">
-<h3>Reset password</h3>
+<button onclick="register()">Create account</button><button class="ghost" onclick="showPanel('loginPanel')">Back to login</button></div>
+<div id="resetPanel" class="hidden"><h3>Reset password</h3>
 <input id="resetEmail" type="email" placeholder="Your account email">
-<button onclick="sendReset()">Send reset email</button>
-<button class="ghost" onclick="showPanel('loginPanel')">Back to login</button>
-</div>
-<div id="newPasswordPanel" class="hidden">
-<h3>Choose a new password</h3>
-<input id="newPassword" type="password" placeholder="New password">
-<button onclick="saveNewPassword()">Save password</button>
-</div>
+<button onclick="sendReset()">Send reset email</button><button class="ghost" onclick="showPanel('loginPanel')">Back to login</button></div>
+<div id="newPasswordPanel" class="hidden"><h3>Choose a new password</h3>
+<input id="newPassword" type="password" placeholder="New password"><button onclick="saveNewPassword()">Save password</button></div>
 <p id="authMessage" class="small"></p>
 </section>
 
-<section id="app" class="hidden">
-<aside id="side"></aside>
-<main id="main">
-<header id="top"></header>
-<div id="body"></div>
-</main>
-</section>
-
+<section id="app" class="hidden"><nav id="rail"></nav><main id="main"></main></section>
 <div id="modal" class="hidden" onclick="if(event.target===this)closeModal()"><div id="modalBox"></div></div>
 <div id="toast"></div>
 
 <script>
-const SUPABASE_URL = "https://xmsqmbgqeqvfakfjrzrn.supabase.co";
-const SUPABASE_KEY = "sb_publishable_Bl5GPm5FoUDryO-rR8usUQ_uJ0EHHlV";
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const SUPABASE_URL="https://xmsqmbgqeqvfakfjrzrn.supabase.co";
+const SUPABASE_KEY="sb_publishable_Bl5GPm5FoUDryO-rR8usUQ_uJ0EHHlV";
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const S={me:null,profile:null,servers:[],server:null,channels:[],members:{},roles:[],view:'home',chat:null,online:{},cache:{}};
+const PERMS={manage_channels:'Manage channels',manage_roles:'Manage roles',send_messages:'Send messages',attach_files:'Attach files'};
 
-const $ = id => document.getElementById(id);
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const S = {me:null, profile:null, servers:[], server:null, channels:[], view:'home', chat:null, online:{}, cache:{}};
+function toast(m,e){const t=$('toast');t.textContent=m;t.className='show'+(e?' err':'');clearTimeout(toast.t);toast.t=setTimeout(()=>t.className='',3500)}
+async function run(p){const{data,error}=await p;if(error){toast(error.message,true);throw error}return data}
+const guard=fn=>(...a)=>Promise.resolve(fn(...a)).catch(e=>console.error(e));
+const fmt=d=>new Date(d).toLocaleString([],{dateStyle:'short',timeStyle:'short'});
+const av=(p,cls='')=>p?.avatar_url?`<img class="av ${cls}" src="${esc(p.avatar_url)}" alt="">`:`<span class="av ${cls}">${esc((p?.username||'?')[0]?.toUpperCase())}</span>`;
+const icon=s=>s.icon_url?`<img src="${esc(s.icon_url)}" alt="">`:esc(s.name[0].toUpperCase());
 
-function toast(msg, err){const t=$('toast');t.textContent=msg;t.className='show'+(err?' err':'');clearTimeout(toast.t);toast.t=setTimeout(()=>t.className='',3500)}
-async function run(p){const {data,error}=await p;if(error){toast(error.message,true);throw error}return data}
-const guard = fn => (...a) => Promise.resolve(fn(...a)).catch(e => console.error(e));
-const fmt = d => new Date(d).toLocaleString([], {dateStyle:'short', timeStyle:'short'});
+async function upload(file,path){
+  if(file.size>10*1024*1024){toast('File too large (max 10 MB)',true);throw new Error('size')}
+  const{error}=await sb.storage.from('uploads').upload(path,file,{upsert:true,contentType:file.type||undefined});
+  if(error){toast(error.message,true);throw error}
+  return sb.storage.from('uploads').getPublicUrl(path).data.publicUrl;
+}
+const safeName=n=>n.replace(/[^\w.\-]/g,'_');
 
 /* ---------- AUTH ---------- */
 function showPanel(id){['loginPanel','registerPanel','resetPanel','newPasswordPanel'].forEach(p=>$(p).classList.toggle('hidden',p!==id));authMsg('')}
-function authMsg(t,err){const m=$('authMessage');m.textContent=t;m.style.color=err?'#ff7777':'#999'}
-async function authCall(p){const {data,error}=await p;if(error){authMsg(error.message,true);throw error}return data}
-const login = guard(async()=>{
-  authMsg('Logging in…');
-  await authCall(sb.auth.signInWithPassword({email:$('loginEmail').value.trim(),password:$('loginPassword').value}));
-});
-const register = guard(async()=>{
-  const username=$('regName').value.trim();
-  if(!username) return authMsg('Please choose a username.',true);
-  const d=await authCall(sb.auth.signUp({email:$('regEmail').value.trim(),password:$('regPassword').value,options:{data:{username}}}));
+function authMsg(t,e){const m=$('authMessage');m.textContent=t;m.style.color=e?'#ff7777':'#999'}
+async function ac(p){const{data,error}=await p;if(error){authMsg(error.message,true);throw error}return data}
+const login=guard(async()=>{authMsg('Logging in…');await ac(sb.auth.signInWithPassword({email:$('loginEmail').value.trim(),password:$('loginPassword').value}))});
+const register=guard(async()=>{
+  const username=$('regName').value.trim();if(!username)return authMsg('Please choose a username.',true);
+  const d=await ac(sb.auth.signUp({email:$('regEmail').value.trim(),password:$('regPassword').value,options:{data:{username}}}));
   authMsg(d.session?'Account created!':'Account created. Check your email to confirm, then log in.');
 });
-const sendReset = guard(async()=>{
-  await authCall(sb.auth.resetPasswordForEmail($('resetEmail').value.trim(),{redirectTo:location.href.split('#')[0]}));
-  authMsg('Reset email sent. Check your inbox.');
+const sendReset=guard(async()=>{await ac(sb.auth.resetPasswordForEmail($('resetEmail').value.trim(),{redirectTo:location.href.split('#')[0]}));authMsg('Reset email sent.')});
+const saveNewPassword=guard(async()=>{await ac(sb.auth.updateUser({password:$('newPassword').value}));authMsg('Password updated.');showPanel('loginPanel');S.recovery=false;if(S.pending)boot(S.pending)});
+sb.auth.onAuthStateChange((ev,s)=>{
+  if(ev==='PASSWORD_RECOVERY'){S.recovery=true;showPanel('newPasswordPanel');return}
+  if(s&&!S.me){if(S.recovery){S.pending=s.user;return}setTimeout(()=>boot(s.user),0)}
+  if(!s&&S.me)setTimeout(teardown,0);
 });
-const saveNewPassword = guard(async()=>{
-  await authCall(sb.auth.updateUser({password:$('newPassword').value}));
-  authMsg('Password updated.'); showPanel('loginPanel');
-  S.recovery=false; if(S.pendingUser) boot(S.pendingUser);
-});
-
-sb.auth.onAuthStateChange((event, session) => {
-  if(event==='PASSWORD_RECOVERY'){S.recovery=true;showPanel('newPasswordPanel');return}
-  if(session && !S.me){ if(S.recovery){S.pendingUser=session.user;return} setTimeout(()=>boot(session.user),0) }
-  if(!session && S.me) setTimeout(teardown,0);
-});
-
-async function boot(user){
-  if(S.me) return;
-  S.me=user;
+async function boot(u){
+  if(S.me)return;S.me=u;
   try{
-    await sb.from('profiles').upsert({id:user.id,username:user.user_metadata?.username||user.email.split('@')[0]},{onConflict:'id',ignoreDuplicates:true});
-    S.profile=await run(sb.from('profiles').select('*').eq('id',user.id).single());
-    S.cache[user.id]=S.profile;
+    await sb.from('profiles').upsert({id:u.id,username:u.user_metadata?.username||u.email.split('@')[0]},{onConflict:'id',ignoreDuplicates:true});
+    S.profile=await run(sb.from('profiles').select('*').eq('id',u.id).single());S.cache[u.id]=S.profile;
     $('auth').classList.add('hidden');$('app').classList.remove('hidden');
-    await loadServers(); startPresence(); goHome();
+    await loadServers();startPresence();goHome();
   }catch(e){console.error(e);S.me=null}
 }
 async function teardown(){
-  await closeChat();
-  if(S.presence) sb.removeChannel(S.presence);
-  Object.assign(S,{me:null,profile:null,servers:[],server:null,channels:[],online:{},cache:{},presence:null});
+  await closeChat();if(S.presence)sb.removeChannel(S.presence);
+  Object.assign(S,{me:null,profile:null,servers:[],server:null,online:{},cache:{},presence:null});
   $('app').classList.add('hidden');$('auth').classList.remove('hidden');showPanel('loginPanel');
 }
 
-/* ---------- DATA HELPERS ---------- */
+/* ---------- DATA ---------- */
 async function preload(ids){
-  const need=[...new Set(ids)].filter(i=>i&&!S.cache[i]);
-  if(!need.length) return;
-  const rows=await run(sb.from('profiles').select('*').in('id',need));
-  rows.forEach(r=>S.cache[r.id]=r);
+  const need=[...new Set(ids)].filter(i=>i&&!S.cache[i]);if(!need.length)return;
+  (await run(sb.from('profiles').select('*').in('id',need))).forEach(r=>S.cache[r.id]=r);
 }
-const uname = id => esc(S.cache[id]?.username||'Unknown');
-
-async function loadServers(){
-  const rows=await run(sb.from('server_members').select('servers(*)').eq('user_id',S.me.id));
-  S.servers=rows.map(r=>r.servers).filter(Boolean);
-}
+const uname=id=>esc(S.cache[id]?.username||'Unknown');
+async function loadServers(){S.servers=(await run(sb.from('server_members').select('servers(*)').eq('user_id',S.me.id))).map(r=>r.servers).filter(Boolean)}
 function startPresence(){
   const ch=sb.channel('presence:alteo',{config:{presence:{key:S.me.id}}});
-  ch.on('presence',{event:'sync'},()=>{
-    const st=ch.presenceState();S.online={};
-    Object.keys(st).forEach(k=>S.online[k]=st[k][0]?.username||'User');
-    renderOnline();
-  }).subscribe(async s=>{if(s==='SUBSCRIBED')await ch.track({username:S.profile.username})});
+  ch.on('presence',{event:'sync'},()=>{const st=ch.presenceState();S.online={};Object.keys(st).forEach(k=>S.online[k]=st[k][0]?.username||'User');paintOnline()})
+   .subscribe(async s=>{if(s==='SUBSCRIBED')await ch.track({username:S.profile.username})});
   S.presence=ch;
 }
-
-/* ---------- SIDEBAR / NAV ---------- */
-function renderSide(){
-  const sv=S.servers.map(s=>`<button class="${S.server?.id===s.id&&S.view==='server'?'on':''}" onclick="selectServer('${s.id}')">${esc(s.name)}</button>`).join('');
-  const ch=S.view==='server'&&S.server?S.channels.map(c=>`<button class="${S.chat?.kind==='channel'&&S.chat.id===c.id?'on':''}" onclick="openChannel('${c.id}')"># ${esc(c.name)}</button>`).join('')+`<button class="ghost" onclick="createChannel()">+ Channel</button>`:'';
-  $('side').innerHTML=`<h2>ALTEO</h2>
-  <button class="${S.view==='home'?'on':''}" onclick="goHome()">Home</button>
-  <button class="${S.view==='dms'||S.view==='dm'?'on':''}" onclick="goDMs()">Direct messages</button>
-  <p class="small">SERVERS</p>${sv}
-  <button class="ghost" onclick="createServer()">+ Server</button>
-  <button class="ghost" onclick="joinServer()">Join server</button>
-  ${ch?`<hr style="width:100%;border-color:#333"><p class="small">CHANNELS</p>${ch}`:''}
-  <div id="account"><b>${esc(S.profile.username)}</b><p class="small">${esc(S.me.email)}</p>
-  <button class="ghost" onclick="openSettings()">Settings</button></div>`;
+const isOwner=()=>S.server?.owner_id===S.me.id;
+const myRole=()=>S.roles.find(r=>r.id===S.members[S.me.id]?.role_id);
+function can(p){
+  if(isOwner())return true;const r=myRole();
+  return r?r.permissions?.[p]===true:(p==='send_messages'||p==='attach_files');
 }
-function setTop(html){$('top').innerHTML=html}
+const roleColor=id=>S.chat?.kind==='channel'?(S.roles.find(r=>r.id===S.members[id]?.role_id)?.color||''):'';
 
-/* ---------- HOME ---------- */
-const goHome = guard(async()=>{
-  await closeChat(); S.view='home'; renderSide(); setTop('<b>Home</b>');
-  $('body').innerHTML=`<div class="sec"><h2>Welcome back, ${esc(S.profile.username)}</h2>
-  <p class="small">YOUR SERVERS</p><div class="cards">${S.servers.map(s=>`<div class="card" onclick="selectServer('${s.id}')">${esc(s.name)}</div>`).join('')||'<span class="small">No servers yet - create or join one from the sidebar.</span>'}</div>
+/* ---------- RAIL / NAV ---------- */
+function setView(v){
+  S.view=v;$('app').className=v==='chat'?'chat':v==='server'?'srv':'';
+  $('rail').innerHTML=`<button class="rb x ${v==='home'?'on':''}" title="Home" onclick="goHome()">⌂</button>
+  <button class="rb x ${v==='dms'?'on':''}" title="Direct messages" onclick="goDMs()">✉</button><hr class="x" style="width:36px">
+  ${S.servers.map(s=>`<button class="rb ${S.server?.id===s.id&&v==='server'?'on':''}" title="${esc(s.name)}" onclick="selectServer('${s.id}')">${icon(s)}</button>`).join('')}
+  <button class="rb x" title="Create server" onclick="createServer()">+</button>
+  <button class="rb x" title="Join server" onclick="joinServer()">→</button>
+  <button class="rb x" style="margin-top:auto" title="Settings" onclick="openSettings()">${av(S.profile)}</button>`;
+}
+const page=(title,body,extra='')=>{$('main').innerHTML=`<header id="top"><b>${title}</b>${extra}</header>${body}`};
+
+const goHome=guard(async()=>{
+  await closeChat();setView('home');
+  page('Home',`<div class="sec"><h2>Welcome back, ${esc(S.profile.username)}</h2>
+  <p class="small">YOUR SERVERS</p><div class="cards">${S.servers.map(s=>`<div class="card" onclick="selectServer('${s.id}')"><span class="rb" style="width:36px;height:36px;font-size:15px">${icon(s)}</span>${esc(s.name)}</div>`).join('')||'<span class="small">No servers yet - use + or → in the sidebar.</span>'}</div>
   <p class="small">ONLINE NOW</p><div class="cards" id="onlineList"></div>
-  <p class="small">RECENT DIRECT MESSAGES</p><div class="cards" id="recentDMs"><span class="small">Loading…</span></div></div>`;
-  renderOnline(); renderRecent('recentDMs');
+  <p class="small">RECENT DIRECT MESSAGES</p><div class="cards" id="recentDMs"><span class="small">Loading…</span></div></div>`);
+  paintOnline();paintRecent('recentDMs');
 });
-function renderOnline(){
-  const el=$('onlineList'); if(!el) return;
+function paintOnline(){
+  const el=$('onlineList');if(!el)return;
   const ids=Object.keys(S.online).filter(i=>i!==S.me.id);
-  el.innerHTML=ids.map(i=>`<div class="card" onclick="openDM('${i}')"><span class="dot"></span>${esc(S.online[i])}</div>`).join('')||'<span class="small">Nobody else is online right now.</span>';
+  el.innerHTML=ids.map(i=>`<div class="card" onclick="openDM('${i}')"><span class="dot"></span>${esc(S.online[i])}</div>`).join('')||'<span class="small">Nobody else is online.</span>';
 }
-async function recentPeers(){
-  const rows=await run(sb.from('direct_messages').select('*').or(`sender_id.eq.${S.me.id},receiver_id.eq.${S.me.id}`).order('created_at',{ascending:false}).limit(60));
+async function paintRecent(id){
+  const rows=await run(sb.from('direct_messages').select('sender_id,receiver_id').or(`sender_id.eq.${S.me.id},receiver_id.eq.${S.me.id}`).order('created_at',{ascending:false}).limit(60));
   const peers=[...new Set(rows.map(r=>r.sender_id===S.me.id?r.receiver_id:r.sender_id))].slice(0,12);
-  await preload(peers); return peers;
+  await preload(peers);const el=$(id);if(!el)return;
+  el.innerHTML=peers.map(p=>`<div class="card" onclick="openDM('${p}')">${av(S.cache[p])}${uname(p)}</div>`).join('')||'<span class="small">No conversations yet.</span>';
 }
-async function renderRecent(elId){
-  const peers=await recentPeers(), el=$(elId); if(!el) return;
-  el.innerHTML=peers.map(p=>`<div class="card" onclick="openDM('${p}')">${uname(p)}</div>`).join('')||'<span class="small">No conversations yet.</span>';
-}
-
-/* ---------- DMs ---------- */
-const goDMs = guard(async()=>{
-  await closeChat(); S.view='dms'; renderSide(); setTop('<b>Direct messages</b>');
-  $('body').innerHTML=`<div class="sec"><input id="dmSearch" placeholder="Search users by username…" oninput="searchUsers(this.value)">
-  <div class="cards" id="dmResults"></div><p class="small">CONVERSATIONS</p><div class="cards" id="dmList"><span class="small">Loading…</span></div></div>`;
-  renderRecent('dmList');
+const goDMs=guard(async()=>{
+  await closeChat();setView('dms');
+  page('Direct messages',`<div class="sec"><input id="dmSearch" placeholder="Search users by username…" oninput="searchUsers(this.value)">
+  <div class="cards" id="dmResults"></div><p class="small">CONVERSATIONS</p><div class="cards" id="dmList"></div></div>`);
+  paintRecent('dmList');
 });
-let searchT;
+let st;
 function searchUsers(q){
-  clearTimeout(searchT);
-  searchT=setTimeout(guard(async()=>{
-    const el=$('dmResults'); if(!el) return;
-    q=q.trim().replace(/[%,()]/g,''); if(!q){el.innerHTML='';return}
+  clearTimeout(st);st=setTimeout(guard(async()=>{
+    const el=$('dmResults');if(!el)return;q=q.trim().replace(/[%,()]/g,'');if(!q){el.innerHTML='';return}
     const rows=await run(sb.from('profiles').select('*').ilike('username',`%${q}%`).neq('id',S.me.id).limit(10));
     rows.forEach(r=>S.cache[r.id]=r);
-    el.innerHTML=rows.map(r=>`<div class="card" onclick="openDM('${r.id}')">${esc(r.username)}</div>`).join('')||'<span class="small">No users found.</span>';
+    el.innerHTML=rows.map(r=>`<div class="card" onclick="openDM('${r.id}')">${av(r)}${esc(r.username)}</div>`).join('')||'<span class="small">No users found.</span>';
   }),250);
 }
-const openDM = guard(async id=>{
-  S.view='dm'; await preload([id]); renderSide();
-  await openChat('dm',id,`<b>@ ${uname(id)}</b><button class="ghost" onclick="goDMs()">Back</button>`);
-});
+const openDM=guard(async id=>{await preload([id]);openChat('dm',id,'@ '+uname(id))});
 
-/* ---------- SERVERS & CHANNELS ---------- */
-const selectServer = guard(async id=>{
-  await closeChat();
-  S.server=S.servers.find(s=>s.id===id); S.view='server';
-  S.channels=await run(sb.from('channels').select('*').eq('server_id',id).order('name'));
-  renderSide();
-  if(S.channels.length) openChannel(S.channels[0].id);
-  else{setTop(srvTop());$('body').innerHTML='<div class="sec small">This server has no channels yet. Create one from the sidebar.</div>'}
+/* ---------- SERVER PAGE (channel list only) ---------- */
+const selectServer=guard(async id=>{
+  await closeChat();S.server=S.servers.find(s=>s.id===id);
+  const[ch,mem,roles]=await Promise.all([
+    run(sb.from('channels').select('*').eq('server_id',id).order('name')),
+    run(sb.from('server_members').select('user_id,role_id').eq('server_id',id)),
+    run(sb.from('roles').select('*').eq('server_id',id).order('created_at'))]);
+  S.channels=ch;S.roles=roles;S.members={};mem.forEach(m=>S.members[m.user_id]=m);
+  await preload(mem.map(m=>m.user_id));paintServer();
 });
-const srvTop = () => `<b>${esc(S.server.name)}</b>${S.server.owner_id===S.me.id?'<button class="ghost" onclick="openServerSettings()">Server settings</button>':''}`;
-const openChannel = guard(async id=>{
-  const c=S.channels.find(x=>x.id===id); if(!c) return;
-  await openChat('channel',id,srvTop().replace('<b>','<b># '+esc(c.name)+' - '));
-});
-const randCode = () => Array.from(crypto.getRandomValues(new Uint8Array(8)),b=>'abcdefghjkmnpqrstuvwxyz23456789'[b%31]).join('');
-const createServer = guard(async()=>{
-  const name=(prompt('Server name')||'').trim(); if(!name) return;
+function paintServer(){
+  setView('server');const s=S.server;
+  const gear=(isOwner()||can('manage_roles')||can('manage_channels'))?'<button class="ghost" onclick="openServerSettings()">⚙ Settings</button>':'';
+  page(`<span style="display:flex;align-items:center;gap:10px"><span class="rb" style="width:34px;height:34px;font-size:14px">${icon(s)}</span>${esc(s.name)}</span>`,
+  `<div class="sec"><p class="small">CHANNELS</p><div class="cards list">${S.channels.map(c=>`<div class="card" onclick="openChannel('${c.id}')"># ${esc(c.name)}</div>`).join('')||'<span class="small">No channels yet.</span>'}</div>
+  ${can('manage_channels')?'<button class="ghost" onclick="createChannel()">+ New channel</button>':''}
+  <p class="small" style="margin-top:22px">MEMBERS - ${Object.keys(S.members).length}</p><div class="cards list">${Object.keys(S.members).map(i=>{const r=S.roles.find(x=>x.id===S.members[i].role_id);return`<div class="card" ${i!==S.me.id?`onclick="openDM('${i}')"`:''}>${av(S.cache[i])}<span style="color:${r?.color||'inherit'}">${uname(i)}</span>${i===s.owner_id?'<span class="badge">Owner</span>':''}${r?`<span class="badge" style="color:${esc(r.color)}">${esc(r.name)}</span>`:''}${S.online[i]?'<span class="dot" style="margin-left:auto"></span>':''}</div>`}).join('')}</div></div>`,gear);
+}
+const openChannel=guard(async id=>{const c=S.channels.find(x=>x.id===id);if(c)openChat('channel',id,'# '+esc(c.name))});
+const randCode=()=>Array.from(crypto.getRandomValues(new Uint8Array(8)),b=>'abcdefghjkmnpqrstuvwxyz23456789'[b%31]).join('');
+const createServer=guard(async()=>{
+  const name=(prompt('Server name')||'').trim();if(!name)return;
   const s=await run(sb.from('servers').insert({name,owner_id:S.me.id,invite_code:randCode()}).select().single());
   await run(sb.from('server_members').insert({server_id:s.id,user_id:S.me.id}));
   await run(sb.from('channels').insert({server_id:s.id,name:'general'}));
-  await loadServers(); toast('Server created'); selectServer(s.id);
+  await loadServers();toast('Server created');selectServer(s.id);
 });
-const joinServer = guard(async()=>{
-  const code=(prompt('Invite code')||'').trim().toLowerCase(); if(!code) return;
+const joinServer=guard(async()=>{
+  const code=(prompt('Invite code')||'').trim().toLowerCase();if(!code)return;
   const s=await run(sb.from('servers').select('*').eq('invite_code',code).maybeSingle());
-  if(!s) return toast('Invalid invite code',true);
+  if(!s)return toast('Invalid invite code',true);
   await run(sb.from('server_members').upsert({server_id:s.id,user_id:S.me.id},{onConflict:'server_id,user_id',ignoreDuplicates:true}));
-  await loadServers(); toast('Joined '+s.name); selectServer(s.id);
+  await loadServers();toast('Joined '+s.name);selectServer(s.id);
 });
-const createChannel = guard(async()=>{
-  if(!S.server) return;
-  const name=(prompt('Channel name')||'').trim().toLowerCase().replace(/\s+/g,'-'); if(!name) return;
-  const c=await run(sb.from('channels').insert({server_id:S.server.id,name}).select().single());
-  S.channels.push(c); renderSide(); openChannel(c.id);
+const createChannel=guard(async()=>{
+  const name=(prompt('Channel name')||'').trim().toLowerCase().replace(/\s+/g,'-');if(!name)return;
+  S.channels.push(await run(sb.from('channels').insert({server_id:S.server.id,name}).select().single()));paintServer();
 });
 
-/* ---------- CHAT ENGINE ---------- */
-async function closeChat(){
-  if(S.chat?.sub) await sb.removeChannel(S.chat.sub);
-  S.chat=null;
-}
+/* ---------- FULL-SCREEN CHAT ---------- */
+async function closeChat(){if(S.chat?.sub)await sb.removeChannel(S.chat.sub);S.chat=null}
+const leaveChat=guard(async()=>{const k=S.chat?.kind;await closeChat();k==='channel'?paintServer():goDMs()});
 async function openChat(kind,id,title){
-  await closeChat();
-  const chat=S.chat={kind,id,seen:new Set(),sub:null};
-  setTop(title); renderSide();
-  $('body').innerHTML=`<div id="messages"><p class="small">Loading…</p></div><div id="sendbar"><input id="messageInput" placeholder="Write a message…" autocomplete="off" onkeydown="if(event.key==='Enter')sendMessage()"><button onclick="sendMessage()">Send</button></div>`;
-  let q=kind==='channel'
-    ? sb.from('messages').select('*').eq('channel_id',id)
-    : sb.from('direct_messages').select('*').or(`and(sender_id.eq.${S.me.id},receiver_id.eq.${id}),and(sender_id.eq.${id},receiver_id.eq.${S.me.id})`);
+  await closeChat();const chat=S.chat={kind,id,seen:new Set(),sub:null,file:null};
+  setView('chat');
+  const sendOk=kind==='dm'||can('send_messages'),fileOk=kind==='dm'||can('attach_files');
+  $('main').innerHTML=`<header id="top"><button class="ghost" title="Back" onclick="leaveChat()">←</button><b>${title}</b></header>
+  <div id="messages"><p class="small">Loading…</p></div><div id="chip" class="small" style="padding:0 14px"></div>
+  ${sendOk?`<div id="sendbar">${fileOk?'<button class="ghost" title="Attach a file" onclick="$(\'fileIn\').click()">📎</button><input type="file" id="fileIn" class="hidden" onchange="pickFile(this)">':''}
+  <input id="messageInput" placeholder="Write a message…" autocomplete="off" onkeydown="if(event.key===\'Enter\')sendMessage()"><button id="sendBtn" onclick="sendMessage()">Send</button></div>`:'<p class="small" style="padding:14px">You do not have permission to send messages here.</p>'}`;
+  const q=kind==='channel'?sb.from('messages').select('*').eq('channel_id',id)
+    :sb.from('direct_messages').select('*').or(`and(sender_id.eq.${S.me.id},receiver_id.eq.${id}),and(sender_id.eq.${id},receiver_id.eq.${S.me.id})`);
   const rows=(await run(q.order('created_at',{ascending:false}).limit(100))).reverse();
-  if(S.chat!==chat) return;
+  if(S.chat!==chat)return;
   await preload(rows.map(r=>r.user_id||r.sender_id));
   $('messages').innerHTML=rows.length?'':'<p class="small" id="empty">No messages yet. Say hello!</p>';
-  rows.forEach(m=>addMsg(m,true)); scrollDown(true);
-  const cfg=kind==='channel'
-    ? {table:'messages',filter:'channel_id=eq.'+id}
-    : {table:'direct_messages',filter:'receiver_id=eq.'+S.me.id};
+  rows.forEach(m=>addMsg(m,true));scrollDown();
+  const cfg=kind==='channel'?{table:'messages',filter:'channel_id=eq.'+id}:{table:'direct_messages',filter:'receiver_id=eq.'+S.me.id};
   chat.sub=sb.channel(`chat:${kind}:${id}:${Date.now()}`)
     .on('postgres_changes',{event:'INSERT',schema:'public',...cfg},async p=>{
-      const m=p.new; if(S.chat!==chat) return;
-      if(kind==='dm'&&m.sender_id!==id) { toast('New message from '+(S.cache[m.sender_id]?.username||'someone')); return }
-      await preload([m.user_id||m.sender_id]); addMsg(m);
-    })
-    .subscribe(st=>{if(st==='CHANNEL_ERROR'||st==='TIMED_OUT')toast('Realtime connection problem - messages may be delayed',true)});
-  $('messageInput').focus();
+      const m=p.new;if(S.chat!==chat)return;
+      if(kind==='dm'&&m.sender_id!==id){toast('New message from '+(S.cache[m.sender_id]?.username||'someone'));return}
+      await preload([m.user_id||m.sender_id]);addMsg(m);
+    }).subscribe(s=>{if(s==='CHANNEL_ERROR'||s==='TIMED_OUT')toast('Realtime connection problem',true)});
+  $('messageInput')?.focus();
 }
-function addMsg(m,initial){
-  const chat=S.chat, box=$('messages'); if(!chat||!box||chat.seen.has(m.id)) return;
-  chat.seen.add(m.id); $('empty')?.remove();
-  const uid=m.user_id||m.sender_id;
-  const near=box.scrollHeight-box.scrollTop-box.clientHeight<120;
-  const d=document.createElement('div'); d.className='msg';
-  d.innerHTML=`<span class="name">${uname(uid)}</span><span class="time">${fmt(m.created_at)}</span><div>${esc(m.content)}</div>`;
-  box.appendChild(d);
-  if(!initial&&(near||uid===S.me.id)) scrollDown();
+function addMsg(m,init){
+  const chat=S.chat,box=$('messages');if(!chat||!box||chat.seen.has(m.id))return;
+  chat.seen.add(m.id);$('empty')?.remove();
+  const uid=m.user_id||m.sender_id,near=box.scrollHeight-box.scrollTop-box.clientHeight<140;
+  let att='';
+  if(m.attachment_url){const u=esc(m.attachment_url);att=(m.attachment_type||'').startsWith('image/')?`<img class="att" src="${u}" alt="" onclick="window.open(this.src)">`:`<a class="file" href="${u}" target="_blank" rel="noopener">📎 ${esc(m.attachment_name||'file')}</a>`}
+  const d=document.createElement('div');d.className='msg';
+  d.innerHTML=`${av(S.cache[uid])}<div><span class="name" style="color:${esc(roleColor(uid)||'#b8a4ff')}">${uname(uid)}</span><span class="time">${fmt(m.created_at)}</span>${m.content?`<div>${esc(m.content)}</div>`:''}${att}</div>`;
+  box.appendChild(d);if(!init&&(near||uid===S.me.id))scrollDown();
 }
 function scrollDown(){const b=$('messages');if(b)b.scrollTop=b.scrollHeight}
-const sendMessage = guard(async()=>{
-  const inp=$('messageInput'), chat=S.chat; if(!inp||!chat) return;
-  const content=inp.value.trim(); if(!content) return;
-  inp.disabled=true;
+function pickFile(i){const f=i.files[0];if(!f||!S.chat)return;S.chat.file=f;$('chip').innerHTML=`📎 ${esc(f.name)} <a href="#" onclick="S.chat.file=null;$('chip').textContent='';return false">remove</a>`}
+const sendMessage=guard(async()=>{
+  const chat=S.chat,inp=$('messageInput');if(!inp||!chat)return;
+  const content=inp.value.trim(),f=chat.file;if(!content&&!f)return;
+  inp.disabled=$('sendBtn').disabled=true;
   try{
-    const row=chat.kind==='channel'
-      ? {channel_id:chat.id,user_id:S.me.id,content}
-      : {sender_id:S.me.id,receiver_id:chat.id,content};
+    const row=chat.kind==='channel'?{channel_id:chat.id,user_id:S.me.id,content}:{sender_id:S.me.id,receiver_id:chat.id,content};
+    if(f){row.attachment_url=await upload(f,`files/${S.me.id}/${Date.now()}-${safeName(f.name)}`);row.attachment_type=f.type||'application/octet-stream';row.attachment_name=f.name}
     const m=await run(sb.from(chat.kind==='channel'?'messages':'direct_messages').insert(row).select().single());
-    inp.value=''; addMsg(m);
-  } finally { inp.disabled=false; inp.focus() }
+    inp.value='';chat.file=null;$('chip').textContent='';if($('fileIn'))$('fileIn').value='';addMsg(m);
+  }finally{inp.disabled=$('sendBtn').disabled=false;inp.focus()}
 });
 
 /* ---------- MODALS ---------- */
-function openModal(html){$('modalBox').innerHTML=html;$('modal').classList.remove('hidden')}
-function closeModal(){$('modal').classList.add('hidden')}
+const openModal=h=>{$('modalBox').innerHTML=h;$('modal').classList.remove('hidden')};
+const closeModal=()=>$('modal').classList.add('hidden');
 
 function openSettings(){
-  openModal(`<h3>User settings</h3>
+  openModal(`<h3>User settings</h3><div class="row" style="justify-content:flex-start;gap:16px">${av(S.profile,'big')}
+  <div><button class="ghost" onclick="$('avIn').click()">Upload profile picture</button><input type="file" id="avIn" accept="image/*" class="hidden" onchange="uploadAvatar(this)"><p class="small">PNG/JPG, max 10 MB</p></div></div>
   <label class="small">Display name</label><input id="setName" value="${esc(S.profile.username)}">
-  <label class="small">Avatar URL</label><input id="setAvatar" value="${esc(S.profile.avatar_url||'')}">
-  <button onclick="saveProfile()">Save profile</button><hr style="border-color:#333">
-  <label class="small">Email</label><input id="setEmail" type="email" value="${esc(S.me.email)}">
-  <button onclick="saveEmail()">Update email</button>
-  <label class="small">New password</label><input id="setPass" type="password" placeholder="At least 6 characters">
-  <button onclick="savePass()">Update password</button><hr style="border-color:#333">
+  <button onclick="saveProfile()">Save name</button><hr>
+  <label class="small">Email</label><input id="setEmail" type="email" value="${esc(S.me.email)}"><button onclick="saveEmail()">Update email</button>
+  <label class="small">New password</label><input id="setPass" type="password" placeholder="At least 6 characters"><button onclick="savePass()">Update password</button><hr>
   <div class="row"><button class="danger" onclick="logout()">Log out</button><button class="ghost" onclick="closeModal()">Close</button></div>`);
 }
-const saveProfile = guard(async()=>{
-  const username=$('setName').value.trim(); if(!username) return toast('Name cannot be empty',true);
-  const avatar_url=$('setAvatar').value.trim()||null;
-  S.profile=await run(sb.from('profiles').update({username,avatar_url}).eq('id',S.me.id).select().single());
-  S.cache[S.me.id]=S.profile; renderSide(); toast('Profile saved');
+const uploadAvatar=guard(async i=>{
+  const f=i.files[0];if(!f)return;
+  const url=await upload(f,`avatars/${S.me.id}/${Date.now()}-${safeName(f.name)}`);
+  S.profile=await run(sb.from('profiles').update({avatar_url:url}).eq('id',S.me.id).select().single());
+  S.cache[S.me.id]=S.profile;setView(S.view);openSettings();toast('Profile picture updated');
 });
-const saveEmail = guard(async()=>{
-  await run(sb.auth.updateUser({email:$('setEmail').value.trim()}));
-  toast('Check your inbox to confirm the new email');
+const saveProfile=guard(async()=>{
+  const username=$('setName').value.trim();if(!username)return toast('Name cannot be empty',true);
+  S.profile=await run(sb.from('profiles').update({username}).eq('id',S.me.id).select().single());S.cache[S.me.id]=S.profile;toast('Saved');
 });
-const savePass = guard(async()=>{
-  const p=$('setPass').value; if(p.length<6) return toast('Password is too short',true);
-  await run(sb.auth.updateUser({password:p})); $('setPass').value=''; toast('Password updated');
-});
-const logout = guard(async()=>{closeModal();await sb.auth.signOut()});
+const saveEmail=guard(async()=>{await run(sb.auth.updateUser({email:$('setEmail').value.trim()}));toast('Check your inbox to confirm the new email')});
+const savePass=guard(async()=>{const p=$('setPass').value;if(p.length<6)return toast('Password too short',true);await run(sb.auth.updateUser({password:p}));$('setPass').value='';toast('Password updated')});
+const logout=guard(async()=>{closeModal();await sb.auth.signOut()});
 
 function openServerSettings(){
-  const s=S.server; if(!s||s.owner_id!==S.me.id) return;
+  const s=S.server,own=isOwner();
   openModal(`<h3>${esc(s.name)} - settings</h3>
-  <p class="small">INVITE CODE</p>
-  <div class="row"><input id="invCode" readonly value="${esc(s.invite_code||'')}"><button onclick="copyInvite()">Copy</button></div>
-  <button class="ghost" onclick="regenInvite()">Generate new code</button>
-  <p class="small">CHANNELS</p>
-  ${S.channels.map(c=>`<div class="row"><span># ${esc(c.name)}</span><button class="danger" onclick="deleteChannel('${c.id}')">Delete</button></div>`).join('')||'<span class="small">None</span>'}
-  <hr style="border-color:#333"><div class="row"><button class="danger" onclick="deleteServer()">Delete server</button><button class="ghost" onclick="closeModal()">Close</button></div>`);
+  ${own?`<div class="row" style="justify-content:flex-start;gap:14px"><span class="rb" style="width:64px;height:64px">${icon(s)}</span><div><button class="ghost" onclick="$('icIn').click()">Upload server icon</button><input type="file" id="icIn" accept="image/*" class="hidden" onchange="uploadIcon(this)"></div></div>
+  <p class="small">INVITE CODE</p><div class="row"><input id="invCode" readonly value="${esc(s.invite_code||'')}" style="flex:1"><button onclick="copyInvite()">Copy</button></div><button class="ghost" onclick="regenInvite()">Generate new code</button><hr>`:''}
+  ${can('manage_channels')?`<p class="small">CHANNELS</p>${S.channels.map(c=>`<div class="row"><span># ${esc(c.name)}</span><button class="danger" onclick="deleteChannel('${c.id}')">Delete</button></div>`).join('')||'<span class="small">None</span>'}<hr>`:''}
+  ${can('manage_roles')?`<p class="small">ROLES</p>${S.roles.map(r=>`<div class="role"><div class="row"><b style="color:${esc(r.color)}">${esc(r.name)}</b><span><input type="color" value="${esc(r.color)}" onchange="updRole('${r.id}',{color:this.value})"> <button class="danger" onclick="delRole('${r.id}')">Delete</button></span></div>
+   <div class="perms">${Object.entries(PERMS).map(([k,l])=>`<label><input type="checkbox" ${r.permissions?.[k]?'checked':''} onchange="togglePerm('${r.id}','${k}',this.checked)">${l}</label>`).join('')}</div></div>`).join('')||'<span class="small">No roles yet.</span>'}
+   <div class="row"><input id="newRole" placeholder="New role name" style="flex:1"><button onclick="addRole()">Create role</button></div><hr>
+   <p class="small">MEMBERS</p>${Object.keys(S.members).map(i=>`<div class="row"><span>${uname(i)}</span><select style="width:auto;margin:0" onchange="setMemberRole('${i}',this.value)"><option value="">No role</option>${S.roles.map(r=>`<option value="${r.id}" ${S.members[i].role_id===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}</select></div>`).join('')}<hr>`:''}
+  <div class="row">${own?'<button class="danger" onclick="deleteServer()">Delete server</button>':'<span></span>'}<button class="ghost" onclick="closeModal()">Close</button></div>`);
 }
-const copyInvite = guard(async()=>{await navigator.clipboard.writeText($('invCode').value);toast('Copied')});
-const regenInvite = guard(async()=>{
-  const code=randCode();
-  await run(sb.from('servers').update({invite_code:code}).eq('id',S.server.id));
-  S.server.invite_code=code; openServerSettings(); toast('New invite code generated');
+const uploadIcon=guard(async i=>{
+  const f=i.files[0];if(!f)return;
+  const url=await upload(f,`icons/${S.server.id}/${Date.now()}-${safeName(f.name)}`);
+  await run(sb.from('servers').update({icon_url:url}).eq('id',S.server.id));
+  S.server.icon_url=url;setView('server');paintServer();openServerSettings();toast('Server icon updated');
 });
-const deleteChannel = guard(async id=>{
-  if(!confirm('Delete this channel and its messages?')) return;
-  await run(sb.from('channels').delete().eq('id',id));
-  S.channels=S.channels.filter(c=>c.id!==id); closeModal();
-  if(S.chat?.id===id){await closeChat();S.channels.length?openChannel(S.channels[0].id):selectServer(S.server.id)} else renderSide();
+const copyInvite=guard(async()=>{await navigator.clipboard.writeText($('invCode').value);toast('Copied')});
+const regenInvite=guard(async()=>{const c=randCode();await run(sb.from('servers').update({invite_code:c}).eq('id',S.server.id));S.server.invite_code=c;openServerSettings();toast('New invite code')});
+const deleteChannel=guard(async id=>{
+  if(!confirm('Delete this channel and its messages?'))return;
+  await run(sb.from('channels').delete().eq('id',id));S.channels=S.channels.filter(c=>c.id!==id);paintServer();openServerSettings();
 });
-const deleteServer = guard(async()=>{
-  if(!confirm('Delete this whole server? This cannot be undone.')) return;
-  await run(sb.from('servers').delete().eq('id',S.server.id));
-  S.server=null; closeModal(); await loadServers(); goHome();
+const addRole=guard(async()=>{
+  const name=$('newRole').value.trim();if(!name)return;
+  S.roles.push(await run(sb.from('roles').insert({server_id:S.server.id,name,color:'#b8a4ff',permissions:{send_messages:true,attach_files:true}}).select().single()));openServerSettings();
+});
+const updRole=guard(async(id,patch)=>{
+  const r=await run(sb.from('roles').update(patch).eq('id',id).select().single());S.roles=S.roles.map(x=>x.id===id?r:x);paintServer();openServerSettings();
+});
+const togglePerm=(id,k,v)=>updRole(id,{permissions:{...S.roles.find(r=>r.id===id).permissions,[k]:v}});
+const delRole=guard(async id=>{
+  if(!confirm('Delete this role?'))return;
+  await run(sb.from('roles').delete().eq('id',id));S.roles=S.roles.filter(r=>r.id!==id);
+  Object.values(S.members).forEach(m=>{if(m.role_id===id)m.role_id=null});paintServer();openServerSettings();
+});
+const setMemberRole=guard(async(uid,rid)=>{
+  await run(sb.from('server_members').update({role_id:rid||null}).eq('server_id',S.server.id).eq('user_id',uid));
+  S.members[uid].role_id=rid||null;paintServer();toast('Role updated');
+});
+const deleteServer=guard(async()=>{
+  if(!confirm('Delete this whole server? This cannot be undone.'))return;
+  await run(sb.from('servers').delete().eq('id',S.server.id));S.server=null;closeModal();await loadServers();goHome();
 });
 </script>
 </body>
