@@ -77,6 +77,7 @@ hr{border:0;border-top:1px solid #333;margin:14px 0}
 <div id="newPasswordPanel" class="hidden"><h3>Choose a new password</h3>
 <input id="newPassword" type="password" placeholder="New password"><button onclick="saveNewPassword()">Save password</button></div>
 <p id="authMessage" class="small"></p>
+<button id="resendBtn" class="ghost hidden" onclick="resendConfirm()">Resend confirmation email</button>
 </section>
 
 <section id="app" class="hidden"><nav id="rail"></nav><main id="main"></main></section>
@@ -110,12 +111,27 @@ const safeName=n=>n.replace(/[^\w.\-]/g,'_');
 /* ---------- AUTH ---------- */
 function showPanel(id){['loginPanel','registerPanel','resetPanel','newPasswordPanel'].forEach(p=>$(p).classList.toggle('hidden',p!==id));authMsg('')}
 function authMsg(t,e){const m=$('authMessage');m.textContent=t;m.style.color=e?'#ff7777':'#999'}
-async function ac(p){const{data,error}=await p;if(error){authMsg(error.message,true);throw error}return data}
+async function ac(p){
+  const{data,error}=await p;
+  if(error){
+    let m=error.message;
+    if(/not confirmed/i.test(m)){m='Please confirm your email first. Check your inbox or spam folder.';S.lastEmail=$('loginEmail').value.trim();$('resendBtn').classList.remove('hidden')}
+    else if(/rate limit|too many/i.test(m))m='Too many emails sent. Please wait a few minutes and try again.';
+    authMsg(m,true);throw error;
+  }
+  return data;
+}
+const resendConfirm=guard(async()=>{
+  const email=S.lastEmail||$('loginEmail').value.trim();if(!email)return authMsg('Enter your email first.',true);
+  await ac(sb.auth.resend({type:'signup',email}));authMsg('Confirmation email sent again.');
+});
 const login=guard(async()=>{authMsg('Logging in…');await ac(sb.auth.signInWithPassword({email:$('loginEmail').value.trim(),password:$('loginPassword').value}))});
 const register=guard(async()=>{
   const username=$('regName').value.trim();if(!username)return authMsg('Please choose a username.',true);
-  const d=await ac(sb.auth.signUp({email:$('regEmail').value.trim(),password:$('regPassword').value,options:{data:{username}}}));
-  authMsg(d.session?'Account created!':'Account created. Check your email to confirm, then log in.');
+  const d=await ac(sb.auth.signUp({email:$('regEmail').value.trim(),password:$('regPassword').value,options:{data:{username},...(location.protocol.startsWith('http')?{emailRedirectTo:location.href.split('#')[0]}:{})}}));
+  S.lastEmail=$('regEmail').value.trim();
+  if(!d.session)$('resendBtn').classList.remove('hidden');
+  authMsg(d.session?'Account created!':'Account created. Check your email (and spam folder) to confirm, then log in.');
 });
 const sendReset=guard(async()=>{await ac(sb.auth.resetPasswordForEmail($('resetEmail').value.trim(),{redirectTo:location.href.split('#')[0]}));authMsg('Reset email sent.')});
 const saveNewPassword=guard(async()=>{await ac(sb.auth.updateUser({password:$('newPassword').value}));authMsg('Password updated.');showPanel('loginPanel');S.recovery=false;if(S.pending)boot(S.pending)});
